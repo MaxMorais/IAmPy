@@ -187,7 +187,7 @@ class BaseMeta(BaseDocument):
                 self._keyword_fields = ['name']
         return self._keyword_fields
 
-    def validate_select(self, field, value):
+    def validate_select(self, field, value, errors, raise_errors):
         if not field.options:
             return
         
@@ -202,9 +202,13 @@ class BaseMeta(BaseDocument):
             valid_values = valid_values.items()
         
         if value not in valid_values:
-            raise app.errors.ValueError(
-                f'DocType {self.name}: Invalid value "{value}" for "{field.label}". Must be one of {(",".join(valid_values))}'
-            )
+            valid = ",".join(valid_values)
+            if raise_errors:
+                raise app.errors.ValueError(
+                    f'DocType {self.name}: Invalid value "{value}" for "{field.label}". Must be one of {valid}'
+                )
+            else:
+                errors[field.fieldname].append(f'Invalid value "{value}". Must be one of {valid}')
         return value
 
     def set_default_indicators(self):

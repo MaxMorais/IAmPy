@@ -10,6 +10,9 @@ class Database(Observable):
         self.init_type_map()
         self.cache = CacheManager()
 
+    def close(self):
+        self.conn and self.conn.close()
+
     def migrate(self):
         for doctype in app.models:
             meta = app.get_meta(doctype)

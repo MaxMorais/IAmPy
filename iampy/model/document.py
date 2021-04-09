@@ -147,11 +147,17 @@ class BaseDocument(Observable):
 
         return BaseDocument(data)
 
-    def validate_insert(self):
-        self.validatet_mandatory()
-        self.validate_fields()
+    def validate(self):
+        errors = ODict()
+        self.validate_insert(errors, False)
+        return bool(not errors), errors
 
-    def validate_mandatory(self):
+    def validate_insert(self, errors=None, raise_errors=True):
+        if errors is None: errors = ODict()
+        self.validatet_mandatory(errors, raise_errors)
+        self.validate_fields(errors, raise_errors)
+
+    def validate_mandatory(self, errors, raise_errors):
         check_for_mandatory = [self]
         children_fields = filter(lambda df: df.fieldtype in ('Table', 'Form'))
         for children_field in children_fields:
@@ -161,10 +167,8 @@ class BaseDocument(Observable):
                 check_for_mandatory.extend(self[children_field.fieldname])
         
         def get_missing_mandatory(doc):
-
             def is_empty(df):
                 value = doc.get(df.fieldname)
-
                 if isinstance(df.fieldtype, 'Table') and not value:
                     return True
                 elif isinstance(df.fieldtype 'Form') and not value:
@@ -175,6 +179,14 @@ class BaseDocument(Observable):
             mandatory_fields = filter(lambda df: df.required, doc.meta.fields)
             message = ', '.join(map(lambda df: f'"{df.label}"', filter(is_empty, mandatory_fields)))
 
+            for field in filter(is_empty, mandatory_fields):
+                if field.fieldname not in errors:
+                    errors[field.fieldname] = []
+                if not doc.meta.is_child:
+                    errors[field.fieldname].append('Is mandatory')
+                else:
+                    errors[field.fieldname].append('On Row {}: Is Mandatory'.format(doc.idx))
+
             if message and doc.meta.is_child:
                 parentfield = doc.parentdoc.meta.get_field(doc.parentfield)
                 message = f'{parentfield.label}: Row {doc.idx}: {message}'
@@ -183,23 +195,24 @@ class BaseDocument(Observable):
         
         missing_mandatory = list(filter(None, map(get_missing_mandatory, check_for_mandatory)))
 
-        if missing_mandatory:
+        if missing_mandatory and raise_errors:
             fields = '\n'.join(missing_mandatory)
             message = app._('Value missing for {0}', fields)
             raise iampy.errors.MandatoryError(message)
 
-    def validate_fields(self):
-        for fiel in self.meta.fields:
-            self.validate_field(field.fieldname, self[field.fieldname])
+    def validate_fields(self, errors, raise_errors):
+        for field in self.meta.fields:
+            errors.setdefault(field.fieldname, [])
+            self.validate_field(field.fieldname, self[field.fieldname], errors, raise_errors)
 
-    def validate_field(self, fieldname, value):
+    def validate_field(self, fieldname, value, errors, raise_errors):
         field = self.meta.get_field(fieldname)
 
         if not field:
             raise iampy.errors.InvalidFieldError(f'Invalid field "{fieldname}"')
         
         if field.fieldtype == 'Select':
-            self.meta.validate_select(field, value)
+            self.meta.validate_select(field, value, errors, raise_errors)
         if field.validate and value not is None:
             validator = None
             if isinstance(field.validate, dict):
@@ -207,9 +220,15 @@ class BaseDocument(Observable):
             elif callable(field.validate):
                 validator = field.validate
             if validator:
-                validator(value, self)
+                try:
+                    validator(value, self)
+                except Exception as e:
+                    if raise_errors:
+                        raise e
+                    errors[field.fieldname].append(e.message)
         
     def get_validate_function(self, validator):
+        # TODO: need work
         pass
 
     def get_valid_dict(self):
