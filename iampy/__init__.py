@@ -119,6 +119,7 @@ class Application(ODict):
                 meta.save()
     
         self.db.enable_foreign_keys()
+        app.db.commit()
 
     def load_all_meta(self):
         for doc in self.db.get_all('DocType'):
