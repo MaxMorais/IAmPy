@@ -21,6 +21,11 @@ class BaseMeta(BaseDocument):
         
         if not self.title_field:
             self.title_field = 'name'
+    
+    def __setitem__(self, key, value):
+        from iampy.utils.observable import Observable
+
+        Observable.__setitem__(self, key, value)
         
     def update(self, data):
         self.update(data)
@@ -105,16 +110,18 @@ class BaseMeta(BaseDocument):
         return self._has_formula
 
     def get_base_doctype(self):
-        return getattr(self, 'based_on', self.name)
+        return self.get('based_on', self.name)
     
-    def get_valid_fields(self, with_children = True):
-        if not hasattr(self, '_valid_fields'):
+    def get_valid_fields(self, with_children=True):
+        from iampy import model
+        
+        if not self.get('_valid_fields'):
             self._valid_fields = []
             self._valid_fields_with_children = []
 
-        def _add(field):
-            self._valid_fields.append(field)
-            self._valid_fields_with_children.append(field)
+        def _add(field, s = self):
+            s._valid_fields.append(field)
+            s._valid_fields_with_children.append(field)
 
         # fields validation
         for i, df in enumerate(self.fields, 1):
@@ -132,15 +139,15 @@ class BaseMeta(BaseDocument):
 
         # standard fields
         for field in model.common_fields:
-            if field.fieldtype in frappe.db.type_map \
-                and field.fieldame not in doctype_fields:
+            if field.fieldtype in app.db.type_map \
+                and field.fieldname not in doctype_fields:
                 _add(field)
         
         if self.is_submittable:
             _add(ODict(
-                fieldtype: 'Check',
-                fieldname: 'submitted',
-                label: app._('Submitted')
+                fieldtype = 'Check',
+                fieldname = 'submitted',
+                label = app._('Submitted')
             ))
 
         if self.is_child:
@@ -148,7 +155,7 @@ class BaseMeta(BaseDocument):
             for field in model.child_fields:
                 if field.fieldtype in app.db.type_map \
                     and field.fieldname not in doctype_fields:
-                    _add(fields)
+                    _add(field)
         else:
             # parent fields
             for field in model.parent_fields:
@@ -166,8 +173,9 @@ class BaseMeta(BaseDocument):
         # doctype fields
         for field in self.fields:
             if field.fieldtype in app.db.type_map:
-                _include(field)
-            elif field.fieldtype in ('Table', 'Form'):
+                _add(field)
+            
+            if field.fieldtype in ('Table', 'Form'):
                 self._valid_fields_with_children.append(field)
         
         if with_children:
@@ -181,7 +189,7 @@ class BaseMeta(BaseDocument):
 
             if not (self._keyword_fields and self.fields):
                 self._keyword_fields = map(lambda df: df.fieldname, 
-                    filter(lambda df: df.fieldtype not in ('Form', 'Table') and df.required, self.fields)):
+                    filter(lambda df: df.fieldtype not in ('Form', 'Table') and df.required, self.fields))
             
             if not self._keyword_fields:
                 self._keyword_fields = ['name']
@@ -218,7 +226,7 @@ class BaseMeta(BaseDocument):
                     'key': 'submitted',
                     'colors': {
                         0: indicator_color.GRAY,
-                        1, indicator_color.BLUE
+                        1: indicator_color.BLUE
                     }
                 }
 
@@ -231,12 +239,12 @@ class BaseMeta(BaseDocument):
                 if value:
                     return self.indicators['colors'][value] or indicator_color.GRAY
                 else:
-                    return indicator_color.GRAY:
+                    return indicator_color.GRAY
             else:
                 return indicator_color.GRAY
 
     def trigger(self, event, **params):
-        params.update({'doc': self, 'event': event})
-        super().trigger(event, event)
+        params.update({'doc': self})
+        super().trigger(event, **params)
 
     

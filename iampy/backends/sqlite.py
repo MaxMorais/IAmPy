@@ -1,28 +1,51 @@
 import sqlite3
-from .database import Database, app, get_random_string
+from collections import namedtuple
+from .database import Database, ODict, get_random_string
 
-debug = False
-
+def Row(cursor, row):
+    return ODict(list(zip(
+        [col[0] for col in cursor.description],
+        row
+    )))
+    
 class SQLiteDatabase(Database):
-    def __init__(self, path, **params):
-        super()
-        self.path = path
-        self.connection_params = params
 
-    def connect(self, path, **params):
-        if path:
-            self.path = path
-        if params:
-            self.connection_params = params
+    def connect(self):
+        dictrows = self.app.config.db.dictrows 
+        text_factory = self.app.config.db.text_factory or str
+        functions = self.app.config.db.functions or {}
+        aggregates = self.app.config.db.aggregates or {}
+        collations = self.app.config.db.collations or {}
+        extensions = self.app.config.db.extensions or ()
 
-        self.conn = sqlite3.connect(path, **self.connection_params)
-        self.run('PRAGM foreign_keys=ON')
+        self.conn = sqlite3.connect(self.app.config.db.file, **self.app.config.db.connection_params)
+        self.conn.text_factory = text_factory
 
-        if debug:
+        if dictrows:
+            self.conn.row_factory = Row
+
+        for name, value in functions.items():
+            self.conn.create_function(name, *value)
+        for name, value in aggregates.items():
+            self.conn.create_aggregate(name, *value)
+        for name in collations.items():
+            self.conn.create_collation(name, value)
+        for name in extensions:
+            self.conn.enable_load_extension(True)
+            self.conn.execute('SELECT load_extension(?)', (name,))
+            self.conn.enable_load_extension(False)
+        
+        self.run('PRAGMA foreign_keys=ON')
+
+        if self.app.config.db.debug:
             self.conn.set_trace_callback(print)
 
     def table_exists(self, table):
-        return self.exists('sqlite_master', {'name': table, 'type': 'table'})
+        res = self.sql('SELECT count(name) as [exists] FROM sqlite_master WHERE name=? AND type=?', (
+            table, 'table'
+        )).fetchone()
+        return bool(res[0])
+
 
     def add_foreign_keys(self, doctype, new_foreign_keys):
         self.run('PRAGMA foreign_keys=OFF')
@@ -77,15 +100,15 @@ class SQLiteDatabase(Database):
 
         # TODO Dynamic Links
         if field.fieldtype == 'Link' and field.target:
-            meta = app.get_meta(field.target)
+            meta = self.app.get_meta(field.target)
             table_def.foreign_keys.append(
-                self.get_foreign_key_definition(meta.get_base_doctype, field)
+                self.get_foreign_key_definition(meta.get_base_doctype(), field)
             )
         
         if field.indexed or field.unique:
             table_def.indexes.append(ODict(
                 unique = field.unique,
-                field = field.fieldame
+                field = field.fieldname
             ))
 
     def get_column_definition(self, field):
@@ -135,16 +158,15 @@ class SQLiteDatabase(Database):
 
     def update_one(self, docype, doc):
         fields = self.get_keys(doctype)
-        assigns = map(lambda f: '{} = ?'.format(f.fieldame))
+        assigns = map(lambda f: '{} = ?'.format(f.fieldname))
         values = self.get_formatted_values(fields, doc)
 
         # additional name for where clause
         values.append(doc.name)
 
         return self.run('UPDATE {doctype} SET {assigns} WHERE name = ?'.format(
-            **locals(),
-            values
-        ))
+            **locals()
+        ),  values)
 
     def run_delete_other_children(self, field, parent, added):
         # delete other children
@@ -169,7 +191,7 @@ class SQLiteDatabase(Database):
         return self.run('DELETE FROM SingleValue WHERE parent=?', [name])
 
     def rename(self, doctype, old_name, new_name):
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
         base_doctype = meta.get_base_doctype()
         self.run('UPDATE ${base_doctype} SET name = ? WHERE name = ?'.format(
             base_doctype = base_doctype,
@@ -177,11 +199,11 @@ class SQLiteDatabase(Database):
         self.commit()
 
     def set_values(self, doctype, name, field_value_pair):
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
         base_doctype = meta.get_base_doctype()
         valid_fields = self.get_keys(doctype)
-        valid_fieldames = map(lambda df: df.fieldname, valid_fields)
-        fields_to_update = list(filter(lambda df, vf=valid_fieldames: df.fieldname in vf, field_value_pair.keys()))
+        valid_fieldnames = map(lambda df: df.fieldname, valid_fields)
+        fields_to_update = list(filter(lambda df, vf=valid_fieldnames: df.fieldname in vf, field_value_pair.keys()))
 
         # assignment part of query
         assigns = ", ".join(map(lambda df: '{df.fieldname} = ?'.format(df = df)))
@@ -194,7 +216,7 @@ class SQLiteDatabase(Database):
                     field_value_pair[fieldname]
                 )
             )
-            for fieldame in fields_to_update
+            for fieldname in fields_to_update
         ]
 
         # additional name for where clause
@@ -205,52 +227,14 @@ class SQLiteDatabase(Database):
             assigns = assigns
         ), values)
 
-    def get_all(self, 
-                doctype,
-                fields = None,
-                filters = None,
-                limit = None,
-                offset = None,
-                group_by = None,
-                order_by = 'modified',
-                order = 'desc'):
-        
-        meta = app.get_meta(doctype)
-        base_doctype = meta.get_base_doctype()
-
-        if not fields:
-            fields = meta.get_keyword_fields()
-        if isinstance(fields, str):
-            fields = [fields]
-        if filters is None:
-            filters = {}
-        if meta.filters:
-            filters.update(meta.filters)
-
-        conditions, args = self.get_filter_conditions(filters)
-
-        sql = " ".join([
-            'SELECT',
-            ", ".join(fields),
-            "FROM",
-            base_doctype,
-            conditions or "",
-            "GROUP BY {}".format(group_by) if group_by else "",
-            "ORDER BY {} {}".format(order_by, asc) if order_by else "",
-            "LIMIT {}".format(limit) if limit else "",
-            "OFFSET {}".format(offset) if offset else ""
-        ]).strip()
-
-        return self.run(sql, args)
-
-    def sql(self, query, params):
+    def sql(self, query, params=()):
         return self.conn.execute(query, params)
 
     def init_type_map(self):
 
         T, I, R = 'TEXT', 'INTEGER', 'REAL'
 
-        self.type_map = ODict(
+        self.type_map = ODict({
             'Currency': R,
             'Float': R,
             'Percent': R,
@@ -279,7 +263,7 @@ class SQLiteDatabase(Database):
             'Barcode': T,
             'Geolocation': T,
             'Tags': T
-        )
+        })
     
     
     

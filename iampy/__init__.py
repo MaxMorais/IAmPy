@@ -1,30 +1,48 @@
 
+import os
+import inspect
 from .utils.observable import Observable, ODict
+from . import errors, models as core_models
+from .backends.sqlite import SQLiteDatabase
 
 app = None
-
-
 
 class Application(ODict):
     def __init__(self, is_server=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        global app
+        app = self
+
         self.init_config()
         self.init_globals()
+        self.init_db()
+        self.load_all_meta()
 
         self.docs = Observable()
         self.events = Observable()
         self.is_server = is_server
-        self.is_client = not is_server
+        self.is_client = not self.is_server
 
-        global app
-        app = self
+    def init_db(self):
+        self.db = SQLiteDatabase(self)
+        self.db.connect()
+        self.register_meta(core_models.models)
+        self.db.migrate()
 
     def init_config(self):
         self.config = ODict(
-            server_url: 'localhost',
-            server_port: 8000,
-            backend: 'sqlite'
+            backend='sqlite',
+            db=ODict(
+                file = os.path.join(
+                    os.path.abspath(os.path.dirname(__file__)),
+                    'storage',
+                    'iampy.db'
+                ),
+                connection_params=ODict(),
+                dictrows = True,
+                debug = False
+            )
         )
 
     def init_globals(self):
@@ -42,24 +60,31 @@ class Application(ODict):
         # add standard libs and utils to iampy
         self[name] = obj
 
-    def register_models(self, models):
+    def register_meta(self, models):
         # register models from app.model
 
         for doctype in models:
-            meta_definition = self.models[doctype]
+            self.meta_cache[doctype.name] = doctype
+            self.models[doctype.name] = doctype
+    
+    def load_all_meta(self):
+        for doc in self.db.get_all('DocType'):
+            self.load_meta(doc.name)
+            meta_definition = self.models[doc.name]
             if not meta_definition.name:
-                raise iampy.errors.AssetionError(f'Name is mandatory for {doctype}')
+                raise errors.AssetionError(f'Name is mandatory for {doc.name}')
             
-            if meta_definition.ame != doctype:
-                raise iampy.errors.AssetionError(f'Model name mismatch for {doctype}: {meta_definition.name}')
+            if meta_definition.name != doc.name:
+                raise errors.AssetionError(f'Model name mismatch for {doc.anem}: {meta_definition.name}')
 
             fieldnames = sorted(map(lambda df: df.fieldname, meta_definition.fields or []))
             duplicate_fieldnames = [x for x in fieldnames if fieldnames.count(name) > 0]
 
             if duplicate_fieldnames:
-                raise imapy.errors.DuplicateFieldError(f'Duplicate fields in {doctype}: {(", ".join(duplicate_fieldnames))}')
+                raise errors.DuplicateFieldError(f'Duplicate fields in {doc.name}: {(", ".join(duplicate_fieldnames))}')
 
-            self.models[doctype] = meta_definition
+    def load_meta(self, meta):
+        self.meta_cache[meta] = self.models[meta] = self.get_doc('DocType', meta)
 
     def get_models(self, filter_fn):
         models = self.models.values()
@@ -125,9 +150,9 @@ class Application(ODict):
             and name in self.docs[doctype]:
             return self.docs[doctype][name]
 
-    def get_meta(doctype):
+    def get_meta(self, doctype):
         from iampy.model.meta import BaseMeta
-        
+
         if self.meta_cache and doctype in self.meta_cache:
             model = self.models[doctype]
 

@@ -1,12 +1,14 @@
-from iampy import app
+import json
 from iampy.utils.observable import Observable, ODict
 from iampy.utils.cache import CacheManager
 from iampy.utils import get_random_string
+from iampy import errors
 
 
 class Database(Observable):
-    def __init__(self):
-        super()
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
         self.init_type_map()
         self.cache = CacheManager()
 
@@ -14,8 +16,8 @@ class Database(Observable):
         self.conn and self.conn.close()
 
     def migrate(self):
-        for doctype in app.models:
-            meta = app.get_meta(doctype)
+        for doctype in self.app.models:
+            meta = self.app.get_meta(doctype)
             base_doctype = meta.get_base_doctype()
             if not meta.is_single:
                 if self.table_exists(base_doctype):
@@ -26,11 +28,11 @@ class Database(Observable):
 
     def create_table(self, doctype, new_name = None):
         table_def = ODict(
-            columms = [],
+            columns = [],
             foreign_keys = [],
             indexes = []
         )
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
 
         for field in meta.get_valid_fields(with_children = False):
             if field.fieldtype in self.type_map:
@@ -65,7 +67,7 @@ class Database(Observable):
     def get_column_diff(self, doctype):
 
         table_columns = self.get_table_columns(doctype)
-        valid_fields = app.get_meta(doctype).get_valid_fields(with_children=False)
+        valid_fields = self.app.get_meta(doctype).get_valid_fields(with_children=False)
         valid_field_names = map(lambda df: df.fieldname, valid_fields)
         diff = ODict(added=[], removed=[])
 
@@ -91,7 +93,7 @@ class Database(Observable):
     def get_new_foreign_keys(self, doctype):
         foreign_keys = self.get_foreign_keys(doctype)
         new_foreign_keys = []
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
 
         for field in meta.get_valid_fields(with_children = False):
             # TODO Dynamic Links
@@ -114,15 +116,15 @@ class Database(Observable):
     def run_add_column_query(self, doctype, field):
         pass
 
-    def get(self, doctype, name = None, fields = '*'):
-        meta = app.get_meta(doctype)
+    def get_doc(self, doctype, name=None, fields='*'):
+        meta = self.app.get_meta(doctype)
 
         if meta.is_single:
             doc = self.get_single(doctype)
             doc.name = doctype
         else:
             if not name:
-                raise iampy.errors.ValueError('Name is mandatory!')
+                raise errors.ValueError('Name is mandatory!')
             doc = self.get_one(doctype, name, fields)
         
         if not doc:
@@ -153,7 +155,7 @@ class Database(Observable):
         
     def get_single(self, doctype):
         return ODict(
-            row.fieldname: row.value
+            {row.fieldname: row.value
             for row in self.get_all(
                 doctype = 'SingleValue',
                 fields = ['fieldname', 'value'],
@@ -161,7 +163,7 @@ class Database(Observable):
                     'parent': doctype
                 },
                 order = 'asc'
-            )
+            )}
         )
 
     def get_one(self, doctype, name, fields = '*'):
@@ -179,12 +181,12 @@ class Database(Observable):
     def trigger_change(self, doctype, name):
         self.trigger('change:{}'.format(doctype), name=name)
         self.trigger('change', doctype=docype, name=name)
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
         if meta.based_on:
             self.trigger.change(meta.based_on, name)
 
     def insert(self, doctype, doc):
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
         base_doctype = meta.get_base_doctype()
 
         doc = self.apply_base_doctype_filters(doctype, doc)
@@ -205,7 +207,7 @@ class Database(Observable):
         pass
 
     def update(self, doctype, doc):
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
         base_doctype = meta.get_base_doctype()
 
         doc = self.apply_base_doctype_filters(doctype, doc)
@@ -258,7 +260,7 @@ class Database(Observable):
         pass
 
     def update_single(self, doctype, doc):
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
         self.delete_single_values(doctype)
 
         for field in self.get_valid_fields(with_children = False):
@@ -288,10 +290,10 @@ class Database(Observable):
         child.idx = idx
 
     def get_keys(self, doctype):
-        return app.get_meta(doctype).get_valid_fields(with_children = False)
+        return self.app.get_meta(doctype).get_valid_fields(with_children = False)
 
     def get_valid_fields(self, doctype):
-        return app.get_meta(doctype).get_valid_fields(with_children = False)
+        return self.app.get_meta(doctype).get_valid_fields(with_children = False)
     
     def get_formatted_doc(self, fields, doc):
         return {
@@ -315,7 +317,7 @@ class Database(Observable):
         return value
 
     def apply_base_doctype_filters(self, doctype, doc):
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
         if meta.filters:
             for field, value in meta.filters.items():
                 doc[field] = value
@@ -325,7 +327,7 @@ class Database(Observable):
             self.delete(doctype, name)
 
     def delete(self, doctype, name):
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
         base_doctype = meta.get_base_doctype()
         self.delete_one(base_doctype, name)
 
@@ -346,8 +348,8 @@ class Database(Observable):
         return bool(self.get_value(doctype, name))
 
     def get_value(self, doctype, filters, fieldname = 'name'):
-        meta = app.get_meta(doctype)
-        base_doctype = app.get_base_doctype()
+        meta = self.app.get_meta(doctype)
+        base_doctype = meta.get_base_doctype()
         if isinstance(filters, str):
             filters = {'name': filters}
         if meta.filters:
@@ -356,7 +358,7 @@ class Database(Observable):
         row = self.get_all(
             doctype = base_doctype,
             fields = [fieldname],
-            filters: filters,
+            filters = filters,
             start = 0,
             limit = 1,
             order_by = 'name',
@@ -383,15 +385,15 @@ class Database(Observable):
 
     def get_all(self,
                 doctype, 
-                fields,
-                filters,
+                fields = None,
+                filters = None,
                 limit = None,
                 offset = None,
                 group_by = None,
                 order_by = 'creation',
                 order = 'desc'):
         
-        meta = app.get_meta(doctype)
+        meta = self.app.get_meta(doctype)
         base_doctype = meta.get_base_doctype()
 
         if not fields:
@@ -400,11 +402,15 @@ class Database(Observable):
         elif isinstance(fields, str):
             fields = [fields]
 
+        fields = ", ".join(fields)
+
         if meta.filters:
             filters.update(meta.filters)
 
         sql = 'SELECT {fields} FROM {base_doctype} '
-        sql, args = self.get_filter_conditions(filters)
+        where, args = self.get_filter_conditions(filters)
+
+        sql += where
 
         if order_by:
             sql += ' ORDER BY {order_by} {order}'
@@ -416,8 +422,8 @@ class Database(Observable):
             sql += ' LIMIT {limit}'
             if offset:
                 sql += ' OFFSET {offset}'
-        
-        return self.sql(sql.format(**locals()), args)
+
+        return self.sql(sql.format(**locals()), args).fetchall()
 
     def get_filter_conditions(self, filters):
         # {"status": "Open"} => `status = "Open"`
@@ -430,6 +436,12 @@ class Database(Observable):
 
         args, where_list = [], []
         where = lambda args: " ".join(args)
+
+        if isinstance(filters, str):
+            filters = json.loads(filters or '{}')
+
+        if not filters:
+            filters = {}
 
         for field, value in filters.items(): 
             operator = '='
@@ -474,13 +486,19 @@ class Database(Observable):
     def sql(self, query, params = ()):
         pass
 
+    def begin(self):
+        self.sql('begin transaction;')
+
     def commit(self):
         try:
-            self.sql('commit')
-        except iampy.errors.CannotCommitError as e:
+            self.sql('commit;')
+        except errors.CannotCommitError as e:
             pass
         except Exception as e:
-            raise e
+            if 'cannot commit - ' in str(e):
+                pass
+            else:
+                raise e
     
     def clear_value_cache(self, doctype, name):
         key = ":".join([doctype, name])
@@ -490,7 +508,8 @@ class Database(Observable):
         return self.type_map[field.fieldtype]
 
     def get_error(self, e):
-        return iampy.errors.DatabaseError(e)
+        return errors.DatabaseError(e)
 
     def init_type_map(self):
-        return self.type_map = ODict()
+        self.type_map = ODict()
+        return self.type_map

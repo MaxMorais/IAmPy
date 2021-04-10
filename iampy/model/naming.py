@@ -30,7 +30,7 @@ def set_name(doc):
 def get_next_id(doctype):
     # get the last inserted row
 
-    last_inserted = get_last_inserted(doctype):
+    last_inserted = get_last_inserted(doctype)
     name = 1
     if last_inserted:
         try:

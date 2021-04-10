@@ -58,7 +58,7 @@ parent_fields = [
         required = 1
     ),
     ODict(
-        fieldame = 'modified_by',
+        fieldname = 'modified_by',
         fieldtype = 'Data',
         required = 1
     ),

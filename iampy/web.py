@@ -1,4 +1,14 @@
 
+import sys
+import os
+
+sys.path.insert(0, os.path.join(
+    os.path.abspath(
+        os.path.dirname(__file__)
+    ),
+    '..'
+))
+
 from iampy import Application
 from iampy.backends.sqlite import SQLiteDatabase, sqlite3
 from iampy.utils.observable import ODict
@@ -6,15 +16,14 @@ from bottle import route, run, request, response, PluginError
 import json
 import bottle
 import inspect
+import sqlite3
 
 
 class IAmPyPlugin(object):
     name = 'iampy'
     api = 2
 
-    def __init__(self, config, keyword='app'):
-
-        self.config = config
+    def __init__(self, keyword='app'):
         self.keyword = keyword
 
     def setup(self, app):
@@ -32,25 +41,26 @@ class IAmPyPlugin(object):
                 self.name = '_' + self.keyword
     
     def apply(self, callback, route):
-        
-        config = route.config
         _callback = route.callback
 
         argspec = inspect.getargspec(_callback)
-        if keyword not in argspec.args:
+        if self.keyword not in argspec.args:
             return callback
-
-        keyword = self.keyword
-
-        def wrapper(self, *args, **kwargs):
+        
+        def wrapper(*args, **kwargs):
             from iampy import Application
             app = Application()
 
-            kwargs[keyword] = app
+
+            kwargs[self.keyword] = app
             request_writable = bottle.request.method in ('POST', 'PUT', 'DELETE')
 
             try:
+                if request_writable and app.config.db.autocommit:
+                    app.db.begin()
+
                 rv = callback(*args, **kwargs)
+                
                 if request_writable and app.config.db.autocommit:
                     app.db.commit()
             except sqlite3.IntegrityError as e:
@@ -84,7 +94,7 @@ def rjson(fn):
 @rjson
 def get_list(doctype, app):
     for key in ('fields', 'filters'):
-        if key in request.query and if isinstance(request.query[key], str):
+        if key in request.query and isinstance(request.query[key], str):
             request.query[key] = json.loads(request.query[key])
 
         return app.db.get_all(
@@ -93,11 +103,11 @@ def get_list(doctype, app):
             filters = request.query.filters,
             limit = request.query.limit or 20,
             offset = request.query.offset or 0,
-            group_by = reques.query.group_by or '',
+            group_by = request.query.group_by or '',
             order_by = request.query.order_by or 'creation',
             order = request.query.order or 'asc'
         )
-
+   
 
 @route('/api/resource/<doctype>/<name>')
 @rjson
@@ -119,8 +129,8 @@ def create(doctype, app):
     data.doctype = doctype
     doc = app.new_doc(data)
 
-    validated, errors = doc.validate()
-    if not validated:
+    errors = doc.get_errors()
+    if not errors:
         return {
             'status': -1,
             'msg': errors
@@ -132,6 +142,11 @@ def create(doctype, app):
             'id': doc.name
         }
 
+
+@route('/api/resource/<doctype>/search', 'POST')
+@rjson
+def search(doctype, app):
+    pass
 
 @route('/api/resource/<doctype>/<name>', 'PUT')
 @rjson
@@ -169,7 +184,7 @@ def upload_to_doc(doctype, name, app):
 
         doc = app.new_doc(ODict(
             doctype = 'File',
-            name = 
+        #    name = 
         ))
 
 
@@ -182,4 +197,4 @@ def upload_to_field(doctype, name, fieldname, app):
 if __name__ == '__main__':
     app = bottle.default_app()
     app.install(IAmPyPlugin())
-    bottle.run(host='127.0.0.1', port=8080)
+    bottle.run(host='127.0.0.1', port=8080, debug=True)

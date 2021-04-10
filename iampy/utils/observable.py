@@ -1,28 +1,32 @@
 
 class ODict(dict):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.__dict__ = self
-
+    def __getitem__(self, key):
+        if key in self:
+            return super().__getitem__(key)
+        return None
+        
     def __getattr__(self, name):
-        return self.get(name)
+        return self[name]
+        
+    def __setattr__(self, name, value):
+        self[name] = value
 
-    def __getitem__(self, name):
-        return self.get(name)
-
-
+    def __delattr__(self, name):
+        if name in self:
+            del self[name]
+        else:
+            raise AttributeError(f'No such attribute: {name}')
 
 class Observable(ODict):
-    def __init__(self):
-        self._observable = {
-            'is_hot': {},
-            'event_queue': {},
-            'listeners': {},
-            'once_listeners': {}
-        }
+    def __init__(self, *args, **kwargs):
+        kwargs['_observable'] = ODict(
+            is_hot = ODict(),
+            event_queue = ODict(),
+            listeners = ODict(),
+            once_listeners = ODict()
+        )
 
-    def __getitem__(self, key):
-        return self.__dict__.get(key)
+        super().__init__(*args, **kwargs)
 
     def __setitem__(self, key, value):
         self.trigger('before_change', 
@@ -30,14 +34,14 @@ class Observable(ODict):
             fieldname = key,
             new_value = value
         )
-        old = self[key]
-        self[key] = value
-        self.trigger('after_change', {
+        old = self.get(key)
+        super().__setitem__(key, value)
+        self.trigger('after_change', 
             doc = self,
             fieldname = key,
             old_value = old,
             new_value = value
-        })
+        )
 
     def on(self, event, listener):
         self._add_listener('listeners', event, listener)
@@ -52,12 +56,12 @@ class Observable(ODict):
     def once(self, event, listener):
         self._add_listener('once_listeners', event, listener)
 
-    def trigger(self, event,throttle = False, **params):
+    def trigger(self, event, throttle = False, **params):
         if throttle:
             if self._throttled(event, throttle, **params): return
         self._execute_triggers(event, **params)
 
-    def _execute_triggers(self, event, params):
+    def _execute_triggers(self, event, **params):
         response = self._trigger_event('listeners', event, **params)
         if not response: return
 
@@ -81,7 +85,7 @@ class Observable(ODict):
 
     def _throttled(self, event, throttle, **params):
         from threading import Timer
-        from functools import delay
+        from functools import wraps
 
         def delay(delay=0.):
             """
@@ -94,18 +98,18 @@ class Observable(ODict):
                 return delayed
             return wrap
 
-        if event in self._observable['is_hot']:
+        if event in self._observable.is_hot:
             # hot, add to queue
-            if event not in self._observable['event_queue']:
-                self._observable['event_queue'][event] = []
-            self._observable['event_queue'][event].append(params)
+            if event not in self._observable.event_queue:
+                self._observable.event_queue[event] = []
+            self._observable.event_queue[event].append(params)
             return True
         
-        self._observable['is_hot'][event] = True
+        self._observable.is_hot[event] = True
         
-        @delay
+        @delay()
         def throttled():
-            self._observable['is_hot'][event] = False
+            self._observable.is_hot[event] = False
 
             _queued_params = self._observable.event_queue[event]
             self._observable[event_queue].pop(event, None)
@@ -114,5 +118,15 @@ class Observable(ODict):
         throttled()
 
         return False
-
     
+    def _add_listener(self, type_, event, listener):
+        if type_ not in self._observable:
+            self._observable[type_] = {}
+        if event not in self._observable[type_]:
+            self._observable[type_][event] = []
+        self._observable[type_][event].append(listener)
+
+    def _trigger_event(self, type_, event, **params):
+        if event in self._observable[type_]:
+            for listener in self._observable[_type][event]:
+                listener(**params)

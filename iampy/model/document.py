@@ -3,7 +3,7 @@ from iampy import app
 
 from datetime import datetime
 
-from . import name
+from . import naming
 from ..utils.observable import Observable, ODict
 from ..utils.number_format import round
 from typing import Iterable
@@ -11,11 +11,10 @@ from typing import Iterable
 
 class BaseDocument(Observable):
     def __init__(self, data):
-        super().__init__()
+        super().__init__(data)
         self.fetch_values_cache = {}
         self.flags = ODict()
         self.setup()
-        self.update()
 
     def setup(self):
         pass
@@ -46,8 +45,9 @@ class BaseDocument(Observable):
 
     def __setitem__(self, fieldname, value):
         if self[fieldname] != value:
-            self._dirty = True
+            super().__setitem__('_dirty', True)
             # if child is dirty, parent is dirty too
+            if self.meta.is_child:
                 self.parentdoc._dirty = True
 
             old = self[fieldname]
@@ -117,7 +117,7 @@ class BaseDocument(Observable):
             self[fieldname] for fieldname in self.meta.get_keyword_fields()
         ])
 
-    def append(self, key, document = {}, trigger=True)
+    def append(self, key, document = {}, trigger=True):
         if not self[key]:
             self[key] = []
 
@@ -147,10 +147,10 @@ class BaseDocument(Observable):
 
         return BaseDocument(data)
 
-    def validate(self):
+    def get_errors(self):
         errors = ODict()
         self.validate_insert(errors, False)
-        return bool(not errors), errors
+        return errors
 
     def validate_insert(self, errors=None, raise_errors=True):
         if errors is None: errors = ODict()
@@ -169,9 +169,9 @@ class BaseDocument(Observable):
         def get_missing_mandatory(doc):
             def is_empty(df):
                 value = doc.get(df.fieldname)
-                if isinstance(df.fieldtype, 'Table') and not value:
+                if df.fieldtype == 'Table' and not value:
                     return True
-                elif isinstance(df.fieldtype 'Form') and not value:
+                elif df.fieldtype == 'Form' and not value:
                     return True
                 elif value is None or value == '':
                     return True
@@ -213,7 +213,7 @@ class BaseDocument(Observable):
         
         if field.fieldtype == 'Select':
             self.meta.validate_select(field, value, errors, raise_errors)
-        if field.validate and value not is None:
+        if field.validate and value is not None:
             validator = None
             if isinstance(field.validate, dict):
                 validator = self.get_validate_function(field.validate)
@@ -343,7 +343,7 @@ class BaseDocument(Observable):
         def should_apply_formula(field, doc):
             if field.read_only:
                 return True
-            if field.fieldame and field.formula_depends_on and field.fieldname in field.formula_depends_on:
+            if field.fieldname and field.formula_depends_on and field.fieldname in field.formula_depends_on:
                 return True
             if not app.is_server:
                 if doc[field.fieldname] in (None, ''):
@@ -360,7 +360,7 @@ class BaseDocument(Observable):
                     if should_apply_formula(field, row):
                         val = self.get_value_from_formula(field, row)
                         previous_val = row[field.fieldname]
-                        if val not is None and previous_val != val:
+                        if val is not None and previous_val != val:
                             row[field.fieldname] = val
                             changed = True
 
@@ -375,7 +375,7 @@ class BaseDocument(Observable):
                         if should_apply_formula(field, row):
                             val = self.get_value_from_formula(field, row)
                             previous_val = row[field.fieldname]
-                            if val not is None and previous_val != val:
+                            if val is not None and previous_val != val:
                                 row[field.fieldname] = val
                                 changed = True
 
@@ -384,7 +384,7 @@ class BaseDocument(Observable):
             if should_apply_formula(field, doc):
                 previous_val = doc[field.fieldname]
                 val = self.get_value_from_formula(field, doc)
-                if val not is None and previous_val != val:
+                if val is not None and previous_val != val:
                     doc[field.fieldname] = value
                     changed = True
         
@@ -496,19 +496,19 @@ class BaseDocument(Observable):
         self.name = new_name
         self.trigger('after_rename')
 
-    def trigger(self, event, **pargs):
+    def trigger(self, event, **params):
         if self[event]:
             self[event](**params)
-        self.trigger(event, **params)
+        super().trigger(event, **params)
 
     def get_sum(self, tablefield, childfield):
         return reduce(
             lambda a, b: a + b, 
             map(lambda d: float(d[childfield] or 0), self[tablefield] or []), 0)
     
-    def get_from(self, doctype, name, fieldame):
+    def get_from(self, doctype, name, fieldname):
         if not name: return None
-        return app.db.get_cached_value(docype, name, fieldname)
+        return app.db.get_cached_value(doctype, name, fieldname)
     
     def round(self, df = None):
         if isinstance(df, string):
@@ -516,7 +516,7 @@ class BaseDocument(Observable):
         
         system_precision = app.SystemSettings.float_precision
         default_precision = system_precision if system_precision else 2
-        precision = df.precision if df and df.precision not is None else default_precision
+        precision = df.precision if df and df.precision is not None else default_precision
         return round(value, precision)
 
     def is_new(self):
