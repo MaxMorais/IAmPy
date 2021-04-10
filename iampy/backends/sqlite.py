@@ -46,9 +46,14 @@ class SQLiteDatabase(Database):
         )).fetchone()
         return bool(res[0])
 
+    def disable_foreign_keys(self):
+        self.run('PRAGMA foreign_keys=OFF')
+
+    def enable_foreign_keys(self):
+        self.run('PRAGMA foreign_keys=ON')
 
     def add_foreign_keys(self, doctype, new_foreign_keys):
-        self.run('PRAGMA foreign_keys=OFF')
+        self.disable_foreign_keys()
         self.run('BEGIN TRANSACTION')
 
         temp_name = 'TEMP_{}'.format(doctype)
@@ -69,7 +74,7 @@ class SQLiteDatabase(Database):
         self.run('ALTER TABLE {temp_name} RENAME TO {doctype}'.format(**locals()))
 
         self.commit()
-        self.run('PRAGMA foreign_keys=ON')
+        self.enable_foreign_keys()
 
     def remove_columns(self):
         # TODO: need new version of sqlite
@@ -133,10 +138,10 @@ class SQLiteDatabase(Database):
         )
 
     def get_table_columns(self, doctype):
-        return map(lambda d: d.name, self.sql('PRAGMA table_info({})'.format(doctype)))
+        return list(map(lambda d: d.name, self.sql('PRAGMA table_info({})'.format(doctype))))
     
     def get_foreign_keys(self, doctype):
-        return map(lambda d: d['from'], self.sql('PRAGMA foreign_key_list({})'.format(doctype)))
+        return list(map(lambda d: d['from'], self.sql('PRAGMA foreign_key_list({})'.format(doctype))))
 
     def run_add_column_query(self, doctype, field, values):
         self.run('ALTER TABLE {doctype} ADD COLUMN {col_def}'.format(
@@ -144,21 +149,31 @@ class SQLiteDatabase(Database):
             col_def = self.get_column_definition(col_def)
         ), values)
 
+    def get_one(self, doctype, name, fields='*'):
+        meta = self.app.get_meta(doctype)
+        base_doctype = meta.get_base_doctype()
+        fields = self.prepare_fields(fields)
+
+        sql = f'SELECT {fields} FROM {base_doctype} WHERE name = ?'
+        return self.sql(sql, (name, )).fetchone()
+
+
     def insert_one(self, doctype, doc):
-        fields = self.get_keys(doc)
+        fields = self.get_keys(doctype)
         placeholders = ','.join(['?'] * len(fields))
-        colums = ','.join(map(lambda f: f.fieldname, fields))
+        columns = ','.join([df.fieldname for df in fields])
+
         if not doc.name:
             doc.name = get_random_string()
-        
-        return self.run(" ".join([
-            "INSERT INTO {doctype} ({fields}) VALUES ({placeholders})".format(**locals()),
-            self.get_formatted_values(fields, doc)
-        ]))
 
-    def update_one(self, docype, doc):
+        return self.run(
+            f"INSERT INTO {doctype} ({columns}) VALUES ({placeholders})",
+            self.get_formatted_values(fields, doc)
+        )
+
+    def update_one(self, doctype, doc):
         fields = self.get_keys(doctype)
-        assigns = map(lambda f: '{} = ?'.format(f.fieldname))
+        assigns = ", ".join(map(lambda f: f'{f.fieldname} = ?'))
         values = self.get_formatted_values(fields, doc)
 
         # additional name for where clause
@@ -202,7 +217,7 @@ class SQLiteDatabase(Database):
         meta = self.app.get_meta(doctype)
         base_doctype = meta.get_base_doctype()
         valid_fields = self.get_keys(doctype)
-        valid_fieldnames = map(lambda df: df.fieldname, valid_fields)
+        valid_fieldnames = tuple(map(lambda df: df.fieldname, valid_fields))
         fields_to_update = list(filter(lambda df, vf=valid_fieldnames: df.fieldname in vf, field_value_pair.keys()))
 
         # assignment part of query
@@ -228,7 +243,10 @@ class SQLiteDatabase(Database):
         ), values)
 
     def sql(self, query, params=()):
-        return self.conn.execute(query, params)
+        try:
+            return self.conn.execute(query, params)
+        except sqlite3.InterfaceError:
+            import pdb; pdb.set_trace()
 
     def init_type_map(self):
 
@@ -264,6 +282,18 @@ class SQLiteDatabase(Database):
             'Geolocation': T,
             'Tags': T
         })
+
+        self.virtual_types = (
+            'Section Break',
+            'Column Break',
+            'HTML',
+            'Table',
+            'Table MultiSelect',
+            'Button',
+            'Image',
+            'Fold',
+            'Heading'
+        )
     
     
     

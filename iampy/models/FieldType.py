@@ -7,12 +7,13 @@ FieldType = ODict(
     is_single=0,
     is_tree=0,
     is_child=0,
-    keyworld_fields=[
+    keyword_fields=[
         'name',
         'label',
         'is_single',
         'is_tree',
-        'is_child'
+        'is_child',
+        'is_submittable'
     ],
     fields=[
         ODict(
@@ -37,6 +38,7 @@ FieldType = ODict(
             fieldname="python",
             label="Python",
             fieldtype="Code",
+            options='Python',
             description="Contains the Python code to handle the fieldtype eg: `int(value or 0)`"
         ),
         ODict(

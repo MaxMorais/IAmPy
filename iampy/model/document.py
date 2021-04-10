@@ -1,5 +1,5 @@
 
-from iampy import app
+from iampy import app, errors
 
 from datetime import datetime
 
@@ -12,29 +12,36 @@ from typing import Iterable
 class BaseDocument(Observable):
     def __init__(self, data):
         super().__init__(data)
-        self.fetch_values_cache = {}
-        self.flags = ODict()
+        self._flags = ODict()
         self.setup()
+        self.update(data)
+        self._dirty = False
 
     def setup(self):
         pass
 
     def update(self, data):
+        # First update non-child fields
+        for fieldname, value in data.items():
+            if isinstance(value, (list, dict)):
+                continue
+            self[fieldname] = value
+        
+        # Secondly only update child fields
         for fieldname, value in data.items():
             value = data[fieldname]
-            if fieldname.startswith('_'):
-                self[fieldname] = value
-            elif isinstance(value, dict):
-                self[fieldname] = value
-            elif isinstance(value, Iterable):
-                self.extend(value)
+            if isinstance(value, dict): # Form
+                self[fieldname] = self._init_child(value, fieldname)
+            elif isinstance(value, list): # Table
+                for child in value:
+                    self.append(fieldname, child)
     
     @property
     def meta(self):
         if self.is_custom:
             self._meta = app.create_meta(self.fields)
         if not getattr(self, '_meta'):
-            self._meta = app.get_meta(self.doctype)
+            super().__setitem__('_meta', app.get_meta(self.doctype))
         return self._meta
 
     @property
@@ -44,6 +51,11 @@ class BaseDocument(Observable):
         return self._settings
 
     def __setitem__(self, fieldname, value):
+        from iampy.model.meta import BaseMeta
+        if fieldname.startswith('_') or isinstance(self, BaseMeta):
+            super().__setitem__(fieldname, value)
+            return
+
         if self[fieldname] != value:
             super().__setitem__('_dirty', True)
             # if child is dirty, parent is dirty too
@@ -51,8 +63,9 @@ class BaseDocument(Observable):
                 self.parentdoc._dirty = True
 
             old = self[fieldname]
-            if isinstance(value, Iterable) and not isinstance(value, dict):
-                self[fieldname] = []
+
+            if self.meta.get_field(fieldname).fieldtype == "Table":
+                super().__setitem__(fieldname, [])
                 for i, row in enumerate(value, 1):
                     row.idx = i
                     self.append(fieldname, row, trigger=False)
@@ -63,7 +76,7 @@ class BaseDocument(Observable):
                     fieldname = fieldname,
                     old_value = old
                 )
-                self[fieldname] = value
+                super().__setitem__(fieldname, value)
 
             # always run apply_change from the parentdoc
             if self.meta.is_child and self.parentdoc:
@@ -72,7 +85,7 @@ class BaseDocument(Observable):
                 self.apply_change(fieldname, old)
             
     
-    def apply_change(self, fieldname, old):
+    def apply_change(self, fieldname, old = None):
         self.apply_formula(fieldname)
         self.round_floats()
         self.trigger('after_change', 
@@ -96,7 +109,7 @@ class BaseDocument(Observable):
                 else:
                     default = field.default
             
-                self[field.fieldname] = default
+                super().__setitem__(field.fieldname, default)
         
         if self.meta.based_on and self.meta.filters:
             self.set_values(self.meta.filters)
@@ -108,19 +121,27 @@ class BaseDocument(Observable):
 
             if field.fieldtype in ('Int', 'Check'):
                 value = int(value, 10)
+            if field.fieldtype == "Code" and field.options == "Python" and value:
+                value = eval(value, globals(), locals())
             elif field.fieldtype in ('Float', 'Currency', 'Percent'):
                 value = float(value)
             self[field.fieldname] = value
 
     def set_keywords(self):
-        self.keywords = ",".join([
-            self[fieldname] for fieldname in self.meta.get_keyword_fields()
-        ])
+        
+        keyword_fields = tuple(self.meta.get_keyword_fields())
+        keywords = [str(self[fieldname]) for fieldname in keyword_fields if self[fieldname] is not None]
 
+        self.keywords = ",".join(keywords)
+            
     def append(self, key, document = {}, trigger=True):
         if not self[key]:
             self[key] = []
 
+        if key == 'keyword_fields':
+            self[key].append(document)
+            return
+        
         self[key].append(self._init_child(document, key))
         
         if trigger:
@@ -128,6 +149,7 @@ class BaseDocument(Observable):
             self.apply_change(key)
 
     def _init_child(self, data, key):
+        from iampy.utils import get_random_string
         if isinstance(data, BaseDocument):
             return data
 
@@ -140,10 +162,14 @@ class BaseDocument(Observable):
         })
 
         if 'idx' not in data:
-            data.idx = len(self.get(key, []))
+            children = self.get(key, [])
+            if isinstance(children, dict):
+                data.idx = 1
+            else:
+                data.idx = len(self.get(key, []))
         
         if 'name' not in data:
-            data['name'] = app.get_random_string()
+            data['name'] = get_random_string()
 
         return BaseDocument(data)
 
@@ -152,19 +178,27 @@ class BaseDocument(Observable):
         self.validate_insert(errors, False)
         return errors
 
-    def validate_insert(self, errors=None, raise_errors=True):
-        if errors is None: errors = ODict()
-        self.validatet_mandatory(errors, raise_errors)
-        self.validate_fields(errors, raise_errors)
+    def validate_insert(self, error_dict=None, raise_errors=True):
+        if error_dict is None: error_dict = ODict()
+        self.validate_mandatory(error_dict, raise_errors)
+        self.validate_fields(error_dict, raise_errors)
 
-    def validate_mandatory(self, errors, raise_errors):
+    def validate_mandatory(self, error_dict, raise_errors):
         check_for_mandatory = [self]
-        children_fields = filter(lambda df: df.fieldtype in ('Table', 'Form'))
+        children_fields = filter(lambda df: df.fieldtype in ('Table', 'Form'), self.meta.fields)
         for children_field in children_fields:
-            if isinstance(self[children_field.fieldname], dict):
-                check_for_mandatory.append(self[children_field.fieldname])
-            else:
-                check_for_mandatory.extend(self[children_field.fieldname])
+            if isinstance(self[children_field.fieldname], list): # Table
+                for child in self[children_field.fieldname] or []:
+                    if not isinstance(child, BaseDocument):
+                        child['doctype'] = children_field.childtype
+                        child = BaseDocument(child)
+                    check_for_mandatory.append(child)
+            else: # Form
+                child = self[children_field.fieldname] or {}
+                if not isinstance(child, BaseDocument):
+                    child['doctype'] = children_field.childtype
+                    child = BaseDocument(child)
+                check_for_mandatory.append(child)
         
         def get_missing_mandatory(doc):
             def is_empty(df):
@@ -181,11 +215,11 @@ class BaseDocument(Observable):
 
             for field in filter(is_empty, mandatory_fields):
                 if field.fieldname not in errors:
-                    errors[field.fieldname] = []
+                    error_dict[field.fieldname] = []
                 if not doc.meta.is_child:
-                    errors[field.fieldname].append('Is mandatory')
+                    error_dict[field.fieldname].append('Is mandatory')
                 else:
-                    errors[field.fieldname].append('On Row {}: Is Mandatory'.format(doc.idx))
+                    error_dict[field.fieldname].append('On Row {}: Is Mandatory'.format(doc.idx))
 
             if message and doc.meta.is_child:
                 parentfield = doc.parentdoc.meta.get_field(doc.parentfield)
@@ -197,22 +231,22 @@ class BaseDocument(Observable):
 
         if missing_mandatory and raise_errors:
             fields = '\n'.join(missing_mandatory)
-            message = app._('Value missing for {0}', fields)
-            raise iampy.errors.MandatoryError(message)
+            message = f'Value missing for {fields}'
+            raise errors.MandatoryError(message)
 
-    def validate_fields(self, errors, raise_errors):
+    def validate_fields(self, error_dict, raise_errors):
         for field in self.meta.fields:
-            errors.setdefault(field.fieldname, [])
-            self.validate_field(field.fieldname, self[field.fieldname], errors, raise_errors)
+            error_dict.setdefault(field.fieldname, [])
+            self.validate_field(field.fieldname, self[field.fieldname], error_dict, raise_errors)
 
-    def validate_field(self, fieldname, value, errors, raise_errors):
+    def validate_field(self, fieldname, value, error_dict = None, raise_errors = True):
         field = self.meta.get_field(fieldname)
 
         if not field:
-            raise iampy.errors.InvalidFieldError(f'Invalid field "{fieldname}"')
+            raise errors.InvalidFieldError(f'Invalid field "{fieldname}"')
         
         if field.fieldtype == 'Select':
-            self.meta.validate_select(field, value, errors, raise_errors)
+            self.meta.validate_select(field, value, error_dict, raise_errors)
         if field.validate and value is not None:
             validator = None
             if isinstance(field.validate, dict):
@@ -225,20 +259,20 @@ class BaseDocument(Observable):
                 except Exception as e:
                     if raise_errors:
                         raise e
-                    errors[field.fieldname].append(e.message)
+                    error_dict[field.fieldname].append(e.message)
         
     def get_validate_function(self, validator):
         # TODO: need work
         pass
 
     def get_valid_dict(self):
-        data = {}
+        data = ODict()
         for field in self.meta.get_valid_fields():
             value = self[field.fieldname]
-            if isinstance(value, dict) and hasattr(value, 'get_valid_dict'):
-                value = get_valid_dict()
-            elif isinstance(value, Iterable):
-                value = map(lambda doc: doc.get_valid_dict() if hasattr(doc, 'get_valid_dict') else doc)
+            if field.fieldtype == "Form":
+                value = value.get_valid_dict()
+            elif field.fieldtype == "Table":
+                value = list(map(lambda doc: doc.get_valid_dict() if hasattr(doc, 'get_valid_dict') else doc, value))
             data[field.fieldname] = value
         return data
 
@@ -248,23 +282,23 @@ class BaseDocument(Observable):
             if self.is_submittable and self.submitted is None:
                 self.submitted = 0
             
-        now = datetime()
+        now = datetime.now()
         if not self.owner:
             self.owner = app.session.user
 
         if not self.creation:
             self.creation = now
         
-        self.update_modified()
+        self.update_modified(now)
 
-    def update_modified(self):
+    def update_modified(self, now=None):
         if app.is_server:
-            now = datetime.now()
+            if now is None: now = datetime.now()
             self.modified_by = app.session.user
             self.modified = now
 
     def load(self):
-        data = app.db.get(self.doctype, self.name)
+        data = app.db.get_doc(self.doctype, self.name)
         if data and data.name:
             self.sync_values(data)
             if self.meta.is_single:
@@ -276,7 +310,7 @@ class BaseDocument(Observable):
     
     def load_links(self):
         self._links = {}
-        for df in filter(lambda df: df.inline):
+        for df in filter(lambda df: df.inline, self.meta.fields):
             self.load_link(df.fieldname)
     
     def load_link(self, fieldname):
@@ -293,25 +327,32 @@ class BaseDocument(Observable):
     def sync_values(self, data):
         self.clear_values()
         self.trigger('before_sync', doc=self)
-        self.set_values()
+        self.update(data)
         self._dirty = False
         self.trigger('after_sync', doc=self)
 
     def clear_values(self):
-        to_clear = ['_dirty', '_not_inserted'] + map(
+        to_clear = ['_dirty'] + list(map(
             lambda df: df.fieldname,
-            self.meta.get_valid_fields())
+            self.meta.get_valid_fields()))
         for key in to_clear:
             self[key] = None
 
     def set_child_idx(self):
         # renumber children
-        for field in self.meta.get_valid_fields():
-            if field.fieldtype == 'Form':
-                self[field].idx = 1
-            elif field.fieldtype == 'Table':
-                for i, row in enumerate(self[field.fieldtype], 1):
-                    row.idx = i
+        for field in self.meta.get_children_fields():
+            if field.fieldtype == 'Table':
+                children = (self[field.fieldname] or [])[:]
+                self[field.fieldname] = []
+                for child in children:
+                    if not isinstance(child, BaseDocument):
+                        child = self._init_child(child, field.fieldname)
+                    self[field.fieldname].append(child)
+            elif field.fieldtype == 'Form':
+                child = self[field] or ODict()
+                if not isinstance(child, BaseDocument):
+                    child = self._init_child(child, field.fieldname)
+                self[field.fieldname] = child
     
     def compare_with_current_doc(self):
         if app.is_server and not self.is_new():
@@ -319,7 +360,7 @@ class BaseDocument(Observable):
 
             # Check for conflict
             if current_doc and self.modified != current_doc.modified:
-                raise iampy.errors.Conflict(
+                raise errors.Conflict(
                     app._('Document {0} {1} has been modified after loading', [
                         self.doctype,
                         self.name
@@ -328,12 +369,12 @@ class BaseDocument(Observable):
             
             # set submit action flag
             if self.submitted and not current_doc.submitted:
-                self.flags.submit_action = True
+                self._flags.submit_action = True
 
             if current_doc.submitted and not self.submitted:
-                self.flags.revert_action = True
+                self._flags.revert_action = True
 
-    def apply_formula(self, fieldname):
+    def apply_formula(self, fieldname=None):
         if not self.meta.has_formula():
             return False
         
@@ -351,8 +392,8 @@ class BaseDocument(Observable):
             return False
 
         # form children
-        for formfield in self.meta.get_form_fields():
-            formula_fields = app.get_meta(formfield.childype).get_formula_fields()
+        for formfield in self.meta.get_formula_fields():
+            formula_fields = app.get_meta(formfield.childtype).get_formula_fields()
 
             if formula_fields:
                 row = self[formfield.fieldname] or {}
@@ -413,14 +454,36 @@ class BaseDocument(Observable):
                 doc.round_floats()
                 return doc
             
-            value = map(doc_round_floats, value)
+            value = list(map(doc_round_floats, value))
         
         return value
+    
+    def round_floats(self):
+        fields = filter(lambda df: df.fieldtype in ['Float', 'Currency', 'Table', 'Form'], self.meta.get_valid_fields())
+
+        for df in fields:
+            value = self[df.fieldname]
+
+            if value is None:
+                continue
+
+            if isinstance(value, list):
+                # child
+                map(lambda row: row.round_floats(), value)
+                continue
+            elif hasattr(value, 'round_floats'):
+                value.round_floats()
+                continue
+
+            # field
+            rounded_value = self.round(value, df)
+            if rounded_value and value != rounded_value:
+                self[df.fieldname] = rounded_value
 
     def set_name(self):
         naming.set_name(self)
 
-    def db_commit(self):
+    def commit(self):
         # re-run triggers
         self.set_keywords()
         self.set_child_idx()
@@ -444,7 +507,7 @@ class BaseDocument(Observable):
         self.trigger('after_insert')
         self.trigger('after_save')
 
-    def db_update(**kwargs):
+    def db_update(self, **kwargs):
         if kwargs:
             self.update(kwargs)
         self.compare_with_current_doc()
@@ -452,8 +515,8 @@ class BaseDocument(Observable):
         self.trigger('before_update')
 
         # before submit
-        if self.flags.submit_action: self.trigger('before_submit')
-        if self.flags.revert_action: self.trigger('before_rever')
+        if self._flags.submit_action: self.trigger('before_submit')
+        if self._flags.revert_action: self.trigger('before_rever')
 
         # update modified by and modified
         self.update_modified()
@@ -465,8 +528,8 @@ class BaseDocument(Observable):
         self.trigger('after_save')
 
         # after submit
-        if self.flags.submit_action: self.trigger('after_submit')
-        if self.flags.revert_action: self.trigger('after_revert')
+        if self._flags.submit_action: self.trigger('after_submit')
+        if self._flags.revert_action: self.trigger('after_revert')
     
     def db_delete(self):
         self.trigger('before_delete')
@@ -474,7 +537,8 @@ class BaseDocument(Observable):
         self.trigger('after_delete')
 
     def save(self):
-        if self._not_inserted:
+        if not self.name \
+            or not app.db.exists(self.doctype, self.name):
             return self.db_insert()
         else:
             return self.db_update()

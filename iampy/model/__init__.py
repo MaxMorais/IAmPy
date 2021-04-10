@@ -31,7 +31,7 @@ def extend(base, target, **options):
 
     fields = merge_fields(base.fields, target.fields or [])
     base.update(target)
-    base.fields = fields
+    base.fields = list(fields)
     return base
 
 

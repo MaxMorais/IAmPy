@@ -45,7 +45,7 @@ class Observable(ODict):
 
     def on(self, event, listener):
         self._add_listener('listeners', event, listener)
-        if hasattr(self._observable, 'socket_client'):
+        if self._observable.socket_client:
             self._observable.socket_client.on(event, listener)
         
     def off(self, event, listener):
@@ -68,7 +68,7 @@ class Observable(ODict):
         response = self._trigger_event('once_listeners', event, **params)
 
         # emit via socket
-        if hasattr(self._observable, 'socket_server'):
+        if self._observable.socket_server:
             self._observable.socket_server.trigger(event, params)
 
         # clear once-listeners

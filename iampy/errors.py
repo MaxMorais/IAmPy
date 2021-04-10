@@ -20,7 +20,7 @@ class ForbiddenError(BaseError):
         super().__init__(403, message)
 
 
-class DuplicateEntryError(ValidationError):
+class DuplicatedEntryError(ValidationError):
     pass
 
 

@@ -13,7 +13,8 @@ DocType = ODict(
         'label', 
         'is_single', 
         'is_tree', 
-        'is_child'
+        'is_child',
+        'is_submittable'
     ],
     fields = [
         ODict(
@@ -30,20 +31,26 @@ DocType = ODict(
         ),
         ODict(
             fieldname = 'is_single',
-            label = 'Is Single',
+            label = 'Is Single?',
             fieldtype = 'Check',
             default = 0
         ),
         ODict(
             fieldname = 'is_tree',
-            label = 'Is Tree',
+            label = 'Is Tree?',
             fieldtype = 'Check',
             default = 0
         ),
         ODict(
             fieldname = 'is_child',
-            label = 'Is Child',
+            label = 'Is Child?',
             fieldtype = 'Check',
+            default = 0
+        ),
+        ODict(
+            fieldname='is_submittable',
+            label='Is Submittable?',
+            fieldtype='Check',
             default = 0
         ),
         ODict(

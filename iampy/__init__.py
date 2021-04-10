@@ -7,28 +7,39 @@ from .backends.sqlite import SQLiteDatabase
 
 app = None
 
+def get_application(is_server=True, *args, **kwargs):
+    global app
+
+    if app is None:
+        app = Application(is_server, *args, **kwargs)
+    return app
+
 class Application(ODict):
     def __init__(self, is_server=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         global app
-        app = self
+        if app is None:
+            app = self
+
+        self.docs = ODict()
+        self.events = ODict()
+        self.is_server = is_server
+        self.is_client = not self.is_server
+
 
         self.init_config()
         self.init_globals()
         self.init_db()
         self.load_all_meta()
 
-        self.docs = Observable()
-        self.events = Observable()
-        self.is_server = is_server
-        self.is_client = not self.is_server
-
+       
     def init_db(self):
         self.db = SQLiteDatabase(self)
         self.db.connect()
         self.register_meta(core_models.models)
         self.db.migrate()
+        self.populate_meta_tables()
 
     def init_config(self):
         self.config = ODict(
@@ -41,7 +52,7 @@ class Application(ODict):
                 ),
                 connection_params=ODict(),
                 dictrows = True,
-                debug = False
+                debug = True
             )
         )
 
@@ -56,6 +67,11 @@ class Application(ODict):
         # temp params while calling routes
         self.params = ODict()
 
+        # TODO: need auth module
+        self.session = ODict(
+            user = 'Administrator'
+        )
+
     def register_lib(self, name, obj):
         # add standard libs and utils to iampy
         self[name] = obj
@@ -66,7 +82,44 @@ class Application(ODict):
         for doctype in models:
             self.meta_cache[doctype.name] = doctype
             self.models[doctype.name] = doctype
+
+    def populate_meta_tables(self):
+        from iampy.model.meta import BaseMeta
+
+        self.db.disable_foreign_keys()
+
+        # populate FieldType
+        for fieldtype, sql in self.db.type_map.items():
+            if not self.db.exists('FieldType', fieldtype):
+                doc = self.new_doc({
+                    'doctype': 'FieldType',
+                    'name': fieldtype,
+                    'fieldtype': fieldtype,
+                    'sql': sql
+                })
+                doc.save()
+
+        for fieldtype in self.db.virtual_types:
+            if not self.db.exists('FieldType', fieldtype):
+                doc = self.new_doc({
+                    'doctype': 'FieldType',
+                    'name': fieldtype,
+                    'fieldtype': fieldtype,
+                    'virtual': True
+                })
+        app.db.commit()
+        app.db.begin()
+
+        # populate DocType and DocFields
+        for meta_name, meta in self.meta_cache.items():
+            if not isinstance(meta, BaseMeta):
+                meta = BaseMeta(meta)
+
+            if not self.db.exists('DocType', meta.name):
+                meta.save()
     
+        self.db.enable_foreign_keys()
+
     def load_all_meta(self):
         for doc in self.db.get_all('DocType'):
             self.load_meta(doc.name)
@@ -75,16 +128,16 @@ class Application(ODict):
                 raise errors.AssetionError(f'Name is mandatory for {doc.name}')
             
             if meta_definition.name != doc.name:
-                raise errors.AssetionError(f'Model name mismatch for {doc.anem}: {meta_definition.name}')
+                raise errors.AssetionError(f'Model name mismatch for {doc.name}: {meta_definition.name}')
 
             fieldnames = sorted(map(lambda df: df.fieldname, meta_definition.fields or []))
-            duplicate_fieldnames = [x for x in fieldnames if fieldnames.count(name) > 0]
+            duplicate_fieldnames = [name for name in fieldnames if fieldnames.count(name) > 1]
 
             if duplicate_fieldnames:
-                raise errors.DuplicateFieldError(f'Duplicate fields in {doc.name}: {(", ".join(duplicate_fieldnames))}')
+                raise errors.DuplicatedEntryError(f'Duplicate fields in {doc.name}: {(", ".join(duplicate_fieldnames))}')
 
     def load_meta(self, meta):
-        self.meta_cache[meta] = self.models[meta] = self.get_doc('DocType', meta)
+        self.meta_cache[meta] = self.get_doc('DocType', meta)
 
     def get_models(self, filter_fn):
         models = self.models.values()
@@ -110,7 +163,7 @@ class Application(ODict):
             if method in self.methods:
                 return self.methods[method](*args, **kwargs)
             else:
-                raise iampy.errors.MethodNotFoundErrr(f'{method} not found')
+                raise errors.MethodNotFoundErrr(f'{method} not found')
         
         @self.app.post(f'/api/method/{method}', data={'args': args, 'kwargs': kwargs})
         def async_handler(response):
@@ -122,7 +175,8 @@ class Application(ODict):
 
         # add to `app.docs` cache
         if doc.doctype and doc.name:
-            if not doc.doctype in docs:
+            import pdb; pdb.set_trace()
+            if not doc.doctype in self.docs:
                 self.docs[doc.doctype] = ODict()
             
             self.docs[doc.doctype][doc.name] = doc
@@ -135,7 +189,7 @@ class Application(ODict):
             doc.on('change', lambda docs=self.docs, **kwargs: docs.trigger('change', **kwargs))
 
     def remove_from_cache(self, doctype, name):
-        if docs and doctype in self.docs and name in self.docs[doctype]:
+        if self.docs and doctype in self.docs and name in self.docs[doctype]:
             del self.docs[doctype][name]
     
     def is_dirty(self, doctype, name):
@@ -153,13 +207,13 @@ class Application(ODict):
     def get_meta(self, doctype):
         from iampy.model.meta import BaseMeta
 
-        if self.meta_cache and doctype in self.meta_cache:
-            model = self.models[doctype]
+        model = self.models[doctype]
 
-            if not model:
-                raise Exception(f'{doctype} is not a registered doctype')
-            
-            meta_class = model.meta_class or BaseMeta
+        if not model:
+            raise Exception(f'{doctype} is not a registered doctype')
+
+        meta_class = model.meta_class or BaseMeta
+        if not isinstance(self.meta_cache[doctype], meta_class):
             self.meta_cache[doctype] = meta_class(model)
         
         return self.meta_cache[doctype]
@@ -168,10 +222,10 @@ class Application(ODict):
         doc = self.get_doc_from_cache(doctype, name)
 
         if not doc:
-            doc = self.get_document_class(doctype)(
+            doc = self.get_document_class(doctype)(ODict(
                 doctype = doctype,
                 name = name
-            )
+            ))
             doc.load()
             self.add_to_cache(doc)
         
@@ -180,7 +234,7 @@ class Application(ODict):
     def get_document_class(self, doctype):
         from iampy.model.document import BaseDocument
         meta = self.get_meta(doctype)
-        return document_class or BaseDocument
+        return meta.document_class or BaseDocument
 
     def get_single(self, doctype):
         return self.get_doc(doctype, doctype)
@@ -228,6 +282,9 @@ class Application(ODict):
         return BaseMeta({'is_custom': True, 'fields': fields})
 
     def new_doc(self, data):
+        if not isinstance(data, ODict):
+            data = ODict(data)
+
         doc = self.get_document_class(data.doctype)(data)
         doc.set_defaults()
         return doc
@@ -236,6 +293,9 @@ class Application(ODict):
         return self.new_doc(data).db_insert()
         
     def sync_doc(self, data):
+        if not isinstance(data, ODict):
+            data = ODict(data)
+
         if self.db.exist(data.doctype, data.name):
             doc = self.get_doc(data.doctype, data.name)
             doc.update(data)

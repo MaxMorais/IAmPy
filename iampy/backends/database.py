@@ -167,20 +167,14 @@ class Database(Observable):
         )
 
     def get_one(self, doctype, name, fields = '*'):
-        return self.get(
-                doctype = doctype,
-                fields = fields,
-                filters = {'name': name} if isinstance(name, str) else name,
-                limit = 1,
-                first = True
-            )
+        pass
 
     def prepare_fields(self, fields):
         return ", ".join(fields)
 
     def trigger_change(self, doctype, name):
         self.trigger('change:{}'.format(doctype), name=name)
-        self.trigger('change', doctype=docype, name=name)
+        self.trigger('change', doctype=doctype, name=name)
         meta = self.app.get_meta(doctype)
         if meta.based_on:
             self.trigger.change(meta.based_on, name)
@@ -205,6 +199,19 @@ class Database(Observable):
 
     def insert_one(self, doctype, doc):
         pass
+
+    def insert_children(self, meta, doc, doctype):
+        # table fields
+        for field in meta.get_table_fields():
+            for idx, child in enumerate(doc[field.fieldname], 1):
+                self.prepare_child(doctype, doc.name, child, field, idx)
+                self.insert_one(field.childtype, child)
+        
+        # form fields
+        for field in meta.get_form_fields():
+            child = doc[field.fieldname]
+            self.prepare_child(doctype, doc.name, child, field, 1)
+            self.insert_one(field.childtype, child)
 
     def update(self, doctype, doc):
         meta = self.app.get_meta(doctype)
@@ -267,7 +274,7 @@ class Database(Observable):
             value = doc[field.fieldname]
             if value is not None:
                 single_value = app.new_doc({
-                    'docype': 'SingleValue',
+                    'doctype': 'SingleValue',
                     'parent': doctype,
                     'fieldname': field.fieldname,
                     'value': value
@@ -277,7 +284,7 @@ class Database(Observable):
     def delete_single_values(self, name):
         pass
 
-    def rename(self, docype, old_name, new_name):
+    def rename(self, doctype, old_name, new_name):
         pass
 
     def prepare_child(self, parenttype, parent, child, field, idx):
@@ -309,11 +316,15 @@ class Database(Observable):
 
     def get_formatted_value(self, field, value):
         import datetime
-
-        if isinstance(value, (datetime.date, datetime.datetime)):
+        import inspect
+        
+        if field.fieldtype == "Tags":
+            return ",".join((value or []))
+        elif (field.fieldtype == "Code" and field.options == 'Python') or callable(value):
+            if value:
+                return inspect.getsource(value).split('=', 1)[-1]
+        elif isinstance(value, (datetime.date, datetime.datetime)):
             return value.isoformat()
-        elif value is None:
-            return None
         return value
 
     def apply_base_doctype_filters(self, doctype, doc):
@@ -321,6 +332,7 @@ class Database(Observable):
         if meta.filters:
             for field, value in meta.filters.items():
                 doc[field] = value
+        return doc
 
     def delete_many(self, doctype, names):
         for name in names:
@@ -347,9 +359,10 @@ class Database(Observable):
     def exists(self, doctype, name):
         return bool(self.get_value(doctype, name))
 
-    def get_value(self, doctype, filters, fieldname = 'name'):
+    def get_value(self, doctype, filters, fieldname='name'):
         meta = self.app.get_meta(doctype)
         base_doctype = meta.get_base_doctype()
+        
         if isinstance(filters, str):
             filters = {'name': filters}
         if meta.filters:
@@ -359,7 +372,6 @@ class Database(Observable):
             doctype = base_doctype,
             fields = [fieldname],
             filters = filters,
-            start = 0,
             limit = 1,
             order_by = 'name',
             order = 'asc'

@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(
     '..'
 ))
 
-from iampy import Application
+from iampy import get_application
 from iampy.backends.sqlite import SQLiteDatabase, sqlite3
 from iampy.utils.observable import ODict
 from bottle import route, run, request, response, PluginError
@@ -48,9 +48,7 @@ class IAmPyPlugin(object):
             return callback
         
         def wrapper(*args, **kwargs):
-            from iampy import Application
-            app = Application()
-
+            app = get_application()
 
             kwargs[self.keyword] = app
             request_writable = bottle.request.method in ('POST', 'PUT', 'DELETE')

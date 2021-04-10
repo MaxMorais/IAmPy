@@ -1,14 +1,13 @@
 
-import iampy.errors
-from iampy import app
+from iampy import app, errors
 from iampy.utils.observable import ODict
 
 def migrate(all_patches, patch_order):
     executed_patch_runs = []
 
     try:
-        executed_patch_runs = map(lambda d: d.name, iampy.db.get_all('PatchRun', fields=['name']))
-    except iampy.errors.DatabaseError as e:
+        executed_patch_runs = tuple(map(lambda d: d.name, iampy.db.get_all('PatchRun', fields=['name'])))
+    except errors.DatabaseError as e:
         pass
 
     def mapper(text):
@@ -19,7 +18,7 @@ def migrate(all_patches, patch_order):
                 method: all_patches[patch]
             )
     
-    patch_run_order = filter(None, map(mapper, patch_order))
+    patch_run_order = tuple(filter(None, map(mapper, patch_order)))
 
     for patch in patch_run_order:
         if not patch.filename in executed_patch_runs:

@@ -13,7 +13,8 @@ DocField = ODict(
         "label",
         "is_single",
         "is_tree",
-        "is_child"
+        "is_child",
+        'is_submittable'
     ],
     fields=[
         ODict(
@@ -55,10 +56,15 @@ DocField = ODict(
             target="DocType"
         ),
         ODict(
-            fieldname="child_type",
+            fieldname="childtype",
             label="Child Type",
             fieldtype="Link",
             target="DocType"
+        ),
+        ODict(
+            fieldname='precision',
+            label='Precision',
+            fieldtype='Int'
         ),
         ODict(
             fieldname="formula",

@@ -1,16 +1,16 @@
 
-from iampy import app
+from iampy import app, errors
 from .document import BaseDocument, ODict
 
 class BaseMeta(BaseDocument):
     def __init__(self, data):
         if data.based_on:
             config = app.models[data.based_on]
-            preserve = {
-                'name': data.name,
-                'label': data.label,
-                'filters': data.filters
-            }
+            preserve = ODict(
+                name = data.name,
+                label = data.label,
+                filters = data.filters
+            )
             data.update(config)
             data.update(preserve)
 
@@ -22,29 +22,24 @@ class BaseMeta(BaseDocument):
         if not self.title_field:
             self.title_field = 'name'
     
-    def __setitem__(self, key, value):
-        from iampy.utils.observable import Observable
-
-        Observable.__setitem__(self, key, value)
-        
     def update(self, data):
-        self.update(data)
+        dict.update(self, data)
         self.process_fields()
 
     def process_fields(self):
-        # add name field
-        if not next(filter(lambda df: df.fieldname == 'name', self.fields)) and not self.is_single:
-            self.fields = [
+        if not list(filter(lambda df: df.fieldname == 'name', self.fields)):
+            # add name field
+            self.fields.insert(0,
                 ODict(
-                    label = app._('ID'),
+                    label = 'ID',
                     fieldname = 'name',
                     fieldtype = 'Data',
                     required = 1,
                     read_only = 1
                 )
-            ] + self.fields
-
-        for field in self.fields:
+            )
+        
+        for df in self.fields:
             # name field is always required
             if df.fieldname == 'name':
                 df.required = 1
@@ -58,8 +53,46 @@ class BaseMeta(BaseDocument):
         return bool(self.get_field(fieldname))
 
     def get_field(self, fieldname):
-        if not hasattr(self, '_field_map'):
-            self._field_map = {}
+        from iampy import model
+        if '_field_map' not in self:
+            super().__setitem__('_field_map', {})
+
+            # standard fields
+            for field in model.common_fields:
+                if field.fieldname not in self._field_map:
+                    self._field_map[field.fieldname] = field
+
+            # submit fields
+            if self.is_submittable:
+                if 'submitted' not in self._field_map:
+                    self._field_map['submitted'] = ODict(
+                        fieldtype = 'Check',
+                        fieldname = 'submitted',
+                        label=app._('Submitted'),
+                        default= 0
+                    )
+            
+            # child fields
+            if self.is_child:
+                for field in model.child_fields:
+                    if field.fieldtype in app.db.type_map \
+                            and field.fieldname not in self._field_map:
+                        self._field_map[field.fieldname] = field
+            else:
+                # parent field
+                for field in model.parent_fields:
+                    if field.fieldtype in app.db.type_map \
+                            and field.fieldname not in self._field_map:
+                        self._field_map[field.fieldname] = field 
+            
+            # tree fields
+            if self.is_tree:
+                for field in model.tree_fields:
+                    if field.fieldtype in app.db.type_map \
+                            and field.fieldname not in self._field_map:
+                        self._field_map[field.fieldname] = field
+
+            # doctype fields
             for field in self.fields:
                 self._field_map[field.fieldname] = field
         
@@ -71,7 +104,7 @@ class BaseMeta(BaseDocument):
             for key, value in filters.items():
                 match = match and df[key] == value
             return match
-        return list(filters(fn, self.fields))
+        return list(filter(fn, self.fields))
 
     def get_label(self, fieldname):
         df = self.get_field()
@@ -85,7 +118,10 @@ class BaseMeta(BaseDocument):
     def get_form_fields(self):
         if not self._form_fields:
             self._form_fields = self.get_fields_with({'fieldtype': 'Form'})
-        return self._get_form_fields
+        return self._form_fields
+
+    def get_children_fields(self):
+        return self.get_table_fields() + self.get_form_fields()
 
     def get_formula_fields(self):
         if not hasattr(self, '_formula_fields'):
@@ -110,7 +146,7 @@ class BaseMeta(BaseDocument):
         return self._has_formula
 
     def get_base_doctype(self):
-        return self.get('based_on', self.name)
+        return self.based_on or self.name
     
     def get_valid_fields(self, with_children=True):
         from iampy import model
@@ -119,65 +155,65 @@ class BaseMeta(BaseDocument):
             self._valid_fields = []
             self._valid_fields_with_children = []
 
-        def _add(field, s = self):
-            s._valid_fields.append(field)
-            s._valid_fields_with_children.append(field)
+            def _add(field, s = self):
+                s._valid_fields.append(field)
+                s._valid_fields_with_children.append(field)
 
-        # fields validation
-        for i, df in enumerate(self.fields, 1):
-            if not df.fieldname:
-                raise app.errors.ValidationError(
-                    f'DocType {self.name}: "fieldname" is required at index {i}'
-                )
+            # fields validation
+            for i, df in enumerate(self.fields, 1):
+                if not df.fieldname:
+                    raise errors.ValidationError(
+                        f'DocType {self.name}: "fieldname" is required at index {i}'
+                    )
+                
+                if not df.fieldtype:
+                    raise errors.ValidationError(
+                        f'DocType {self.name}: "fieldtype" is required for field {df.fieldname}'
+                    )
             
-            if not df.fieldtype:
-                raise app.errors.ValidationError(
-                    f'DocType {self.name}: "fieldtype" is required for field {df.fieldname}'
-                )
-        
-        doctype_fields = map(lambda df: df.fieldname, self.fields)
+            doctype_fields = tuple(map(lambda df: df.fieldname, self.fields))
 
-        # standard fields
-        for field in model.common_fields:
-            if field.fieldtype in app.db.type_map \
-                and field.fieldname not in doctype_fields:
-                _add(field)
-        
-        if self.is_submittable:
-            _add(ODict(
-                fieldtype = 'Check',
-                fieldname = 'submitted',
-                label = app._('Submitted')
-            ))
-
-        if self.is_child:
-            # child fields
-            for field in model.child_fields:
+            # standard fields
+            for field in model.common_fields:
                 if field.fieldtype in app.db.type_map \
                     and field.fieldname not in doctype_fields:
                     _add(field)
-        else:
-            # parent fields
-            for field in model.parent_fields:
-                if field.fieldtype in app.db.type_map \
-                    and field.fieldname not in doctype_fields:
-                    _add(field)
-        
-        if self.is_tree:
-            # tree fields
-            for field in model.tree_fields:
-                if field.fieldtype in app.db.type_map \
-                    and field.fieldname not in doctype_fields:
-                    _add(field)
-        
-        # doctype fields
-        for field in self.fields:
-            if field.fieldtype in app.db.type_map:
-                _add(field)
             
-            if field.fieldtype in ('Table', 'Form'):
-                self._valid_fields_with_children.append(field)
-        
+            if self.is_submittable:
+                _add(ODict(
+                    fieldtype = 'Check',
+                    fieldname = 'submitted',
+                    label = app._('Submitted')
+                ))
+
+            if self.is_child:
+                # child fields
+                for field in model.child_fields:
+                    if field.fieldtype in app.db.type_map \
+                        and field.fieldname not in doctype_fields:
+                        _add(field)
+            else:
+                # parent fields
+                for field in model.parent_fields:
+                    if field.fieldtype in app.db.type_map \
+                        and field.fieldname not in doctype_fields:
+                        _add(field)
+            
+            if self.is_tree:
+                # tree fields
+                for field in model.tree_fields:
+                    if field.fieldtype in app.db.type_map \
+                        and field.fieldname not in doctype_fields:
+                        _add(field)
+            
+            # doctype fields
+            for field in self.fields:
+                if field.fieldtype in app.db.type_map:
+                    _add(field)
+                
+                if field.fieldtype in ('Table', 'Form'):
+                    self._valid_fields_with_children.append(field)
+            
         if with_children:
             return self._valid_fields_with_children
         else:
@@ -188,14 +224,14 @@ class BaseMeta(BaseDocument):
             self._keyword_fields = self.keyword_fields
 
             if not (self._keyword_fields and self.fields):
-                self._keyword_fields = map(lambda df: df.fieldname, 
-                    filter(lambda df: df.fieldtype not in ('Form', 'Table') and df.required, self.fields))
+                self._keyword_fields = tuple(map(lambda df: df.fieldname, 
+                    filter(lambda df: df.fieldtype not in ('Form', 'Table') and df.required, self.fields)))
             
             if not self._keyword_fields:
-                self._keyword_fields = ['name']
+                self._keyword_fields = ('name',)
         return self._keyword_fields
 
-    def validate_select(self, field, value, errors, raise_errors):
+    def validate_select(self, field, value, error_dict, raise_errors):
         if not field.options:
             return
         
@@ -212,11 +248,11 @@ class BaseMeta(BaseDocument):
         if value not in valid_values:
             valid = ",".join(valid_values)
             if raise_errors:
-                raise app.errors.ValueError(
+                raise errors.ValueError(
                     f'DocType {self.name}: Invalid value "{value}" for "{field.label}". Must be one of {valid}'
                 )
             else:
-                errors[field.fieldname].append(f'Invalid value "{value}". Must be one of {valid}')
+                error_dict[field.fieldname].append(f'Invalid value "{value}". Must be one of {valid}')
         return value
 
     def set_default_indicators(self):
