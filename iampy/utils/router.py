@@ -30,14 +30,14 @@ class Router(observable):
         
     def listen(self):
         try:
-            from browser import window
+            from browser import window, bind
 
+            @bind('hashchange', window)
             def callback(event):
                 route = self.get_route_string()
                 if self.last_route != route:
                     self.show(route)
-
-            window.addEventListener('hashchange', callback)
+            
         except ImportError as e:
             pass
     

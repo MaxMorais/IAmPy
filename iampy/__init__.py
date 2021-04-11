@@ -31,15 +31,17 @@ class Application(ODict):
         self.init_config()
         self.init_globals()
         self.init_db()
-        self.load_all_meta()
-
        
     def init_db(self):
         self.db = SQLiteDatabase(self)
         self.db.connect()
         self.register_meta(core_models.models)
-        self.db.migrate()
-        self.populate_meta_tables()
+        if not self.db.table_exists('DocType') \
+                or not self.db.exists('DocType', 'DocType'):
+            self.db.migrate()
+            self.populate_meta_tables()
+            self.load_all_meta()
+            self.db.close()
 
     def init_config(self):
         self.config = ODict(
@@ -107,6 +109,7 @@ class Application(ODict):
                     'fieldtype': fieldtype,
                     'virtual': True
                 })
+                doc.save()
         app.db.commit()
         app.db.begin()
 

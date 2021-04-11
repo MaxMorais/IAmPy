@@ -173,7 +173,7 @@ class Database(Observable):
         return ", ".join(fields)
 
     def trigger_change(self, doctype, name):
-        self.trigger('change:{}'.format(doctype), name=name)
+        self.trigger(f'change:{doctype}', name=name)
         self.trigger('change', doctype=doctype, name=name)
         meta = self.app.get_meta(doctype)
         if meta.based_on:
@@ -390,7 +390,7 @@ class Database(Observable):
         return self.update_one(doctype, doc)
 
     def get_cached_value(self, doctype, name, fieldname):
-        value = self.cache.hget('{doctype}:{name}'.format(doctype, name), fieldname)
+        value = self.cache.hget(f'{doctype}:{name}', fieldname)
         if value is None:
             value = self.get_value(doctype, name, fieldname)
         return value
@@ -419,23 +419,23 @@ class Database(Observable):
         if meta.filters:
             filters.update(meta.filters)
 
-        sql = 'SELECT {fields} FROM {base_doctype} '
+        sql = f'SELECT {fields} FROM {base_doctype} '
         where, args = self.get_filter_conditions(filters)
 
         sql += where
 
         if order_by:
-            sql += ' ORDER BY {order_by} {order}'
+            sql += f' ORDER BY {order_by} {order}'
         
         if group_by:
-            sql += ' GROUP BY {group_by}'
+            sql += f' GROUP BY {group_by}'
 
         if limit:
-            sql += ' LIMIT {limit}'
+            sql += f' LIMIT {limit}'
             if offset:
-                sql += ' OFFSET {offset}'
+                sql += f' OFFSET {offset}'
 
-        return self.sql(sql.format(**locals()), args).fetchall()
+        return self.sql(sql, args).fetchall()
 
     def get_filter_conditions(self, filters):
         # {"status": "Open"} => `status = "Open"`

@@ -56,22 +56,20 @@ class SQLiteDatabase(Database):
         self.disable_foreign_keys()
         self.run('BEGIN TRANSACTION')
 
-        temp_name = 'TEMP_{}'.format(doctype)
+        temp_name = f'TEMP_{doctype}'
 
         self.create_table(doctype, temp_name)
 
         columns = ", ".join(self.get_table_columns(temp_name))
 
         # copy from old to new table
-        self.run('INSERT INTO {temp_name} ({columns}) SELECT {column} FROM {doctype}'.format(
-            **locals()
-        ))
+        self.run(f'INSERT INTO {temp_name} ({columns}) SELECT {column} FROM {doctype}')
 
         # drop old table
-        self.run('DROP TABLE {doctype}'.format(**locals()))
+        self.run(f'DROP TABLE {doctype}')
 
         # rename new table
-        self.run('ALTER TABLE {temp_name} RENAME TO {doctype}'.format(**locals()))
+        self.run(f'ALTER TABLE {temp_name} RENAME TO {doctype}')
 
         self.commit()
         self.enable_foreign_keys()
@@ -84,20 +82,13 @@ class SQLiteDatabase(Database):
 
         columns = ", ".join(table_def.columns)
         foreign_keys = ", {}".format(", ".join(table_def.foreign_keys)) if table_def.foreign_keys else ''
-        query = 'CREATE TABLE IF NOT EXISTS {doctype} ({columns}{foreign_keys});'.format(
-            doctype=doctype,
-            columns=columns,
-            foreign_keys=foreign_keys
-        )
+        query = f'CREATE TABLE IF NOT EXISTS {doctype} ({columns}{foreign_keys});'
 
         self.run(query)
 
         for index in (table_def.indexes or []):
-            query = "CREATE {unique}INDEX idx_{doctype}_{field} ON {doctype}({field});".format(
-                doctype=doctype,
-                field = index.field,
-                unique = 'UNIQUE ' if index.unique else ''
-            )
+            unique = 'UNIQUE ' if index.unique else ''
+            query = f"CREATE {unique}INDEX idx_{doctype}_{field} ON {doctype}({field});"
             self.run(query)
 
     def update_column_definition(self, field, table_def):
@@ -121,33 +112,28 @@ class SQLiteDatabase(Database):
 
         # TODO: need support to SQLite3 functions
         if isinstance(default_value, str):
-            default_value = "'{}'".format(default_value)
+            default_value = f"'{default_value}'"
         
         return " ".join([
             field.fieldname,
             self.type_map[field.fieldtype],
             'PRIMARY KEY NOT NULL' if field.fieldname == 'name' else '',
             'NOT NULL' if field.required else '',
-            'DEFAULT {}'.format(default_value) if field.default else ''
+            f'DEFAULT {default_value}' if field.default else ''
         ]).strip()
 
     def get_foreign_key_definition(self, doctype, field):
-        return "FOREIGN KEY ({fieldname}) REFERENCES {doctype}(name) ON UPDATE CASCADE ON DELETE RESTRICT".format(
-            doctype=doctype,
-            fieldname=field.fieldname
-        )
+        return f"FOREIGN KEY ({field.fieldname}) REFERENCES {doctype}(name) ON UPDATE CASCADE ON DELETE RESTRICT"
 
     def get_table_columns(self, doctype):
-        return list(map(lambda d: d.name, self.sql('PRAGMA table_info({})'.format(doctype))))
+        return list(map(lambda d: d.name, self.sql(f'PRAGMA table_info({doctype})')))
     
     def get_foreign_keys(self, doctype):
-        return list(map(lambda d: d['from'], self.sql('PRAGMA foreign_key_list({})'.format(doctype))))
+        return list(map(lambda d: d['from'], self.sql(f'PRAGMA foreign_key_list({doctype})')))
 
     def run_add_column_query(self, doctype, field, values):
-        self.run('ALTER TABLE {doctype} ADD COLUMN {col_def}'.format(
-            doctype = doctype,
-            col_def = self.get_column_definition(col_def)
-        ), values)
+        col_def = self.get_column_definition(field)
+        self.run(f'ALTER TABLE {doctype} ADD COLUMN {col_def}', values)
 
     def get_one(self, doctype, name, fields='*'):
         meta = self.app.get_meta(doctype)
@@ -179,28 +165,19 @@ class SQLiteDatabase(Database):
         # additional name for where clause
         values.append(doc.name)
 
-        return self.run('UPDATE {doctype} SET {assigns} WHERE name = ?'.format(
-            **locals()
-        ),  values)
+        return self.run(f'UPDATE {doctype} SET {assigns} WHERE name = ?',  values)
 
     def run_delete_other_children(self, field, parent, added):
         # delete other children
         added.append(parent)
-        return self.run('DELETE FROM {doctype} WHERE parent ? AND name nam no in ({added})'.format(
-            doctype = field.childtype,
-            added = ' '.join(['?'] * len(added) - 1)
-        ), added)
+        placeholders = ' '.join(['?'] * len(added) - 1)
+        return self.run(f'DELETE FROM {field.childtype} WHERE parent ? AND name NOT IN ({placeholders})', added)
 
     def delete_one(self, doctype, name):
-        return self.run('DELETE FROM {doctype} WHERE name = ?'.format(
-            doctype=doctype
-        ), [name])
+        return self.run(f'DELETE FROM {doctype} WHERE name = ?', [name])
 
     def delete_children(self, doctype, parent):
-        return self.run('DELETE FROM {doctype} WHERE parent = ?'.format(
-            doctype = doctype,
-            parent = parent
-        ))
+        return self.run(f'DELETE FROM {doctype} WHERE parent = ?', (parent,))
 
     def delete_single_values(self, name):
         return self.run('DELETE FROM SingleValue WHERE parent=?', [name])
@@ -208,9 +185,7 @@ class SQLiteDatabase(Database):
     def rename(self, doctype, old_name, new_name):
         meta = self.app.get_meta(doctype)
         base_doctype = meta.get_base_doctype()
-        self.run('UPDATE ${base_doctype} SET name = ? WHERE name = ?'.format(
-            base_doctype = base_doctype,
-        ), [new_name, old_name])
+        self.run(f'UPDATE {base_doctype} SET name = ? WHERE name = ?', (new_name, old_name))
         self.commit()
 
     def set_values(self, doctype, name, field_value_pair):
@@ -221,7 +196,7 @@ class SQLiteDatabase(Database):
         fields_to_update = list(filter(lambda df, vf=valid_fieldnames: df.fieldname in vf, field_value_pair.keys()))
 
         # assignment part of query
-        assigns = ", ".join(map(lambda df: '{df.fieldname} = ?'.format(df = df)))
+        assigns = ", ".join(map(lambda df: f'{df.fieldname} = ?'))
 
         # values
         values = [
@@ -237,10 +212,7 @@ class SQLiteDatabase(Database):
         # additional name for where clause
         values.append(name)
 
-        return self.run('UPDATE {base_doctype} SET {assigns} WHERE name = ?'.format(
-            base_doctype = base_doctype,
-            assigns = assigns
-        ), values)
+        return self.run(f'UPDATE {base_doctype} SET {assigns} WHERE name = ?', values)
 
     def sql(self, query, params=()):
         try:

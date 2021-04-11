@@ -219,7 +219,7 @@ class BaseDocument(Observable):
                 if not doc.meta.is_child:
                     error_dict[field.fieldname].append('Is mandatory')
                 else:
-                    error_dict[field.fieldname].append('On Row {}: Is Mandatory'.format(doc.idx))
+                    error_dict[field.fieldname].append(f'On Row {doc.idx}: Is Mandatory')
 
             if message and doc.meta.is_child:
                 parentfield = doc.parentdoc.meta.get_field(doc.parentfield)

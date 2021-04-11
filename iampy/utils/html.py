@@ -23,5 +23,5 @@ def get_html(doctype, name):
         print(error)
         html = ''
 
-    return '<div class="print-page">{}</div>'.format(html)
+    return f'<div class="print-page">{html}</div>'
     

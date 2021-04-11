@@ -54,6 +54,7 @@ class IAmPyPlugin(object):
             request_writable = bottle.request.method in ('POST', 'PUT', 'DELETE')
 
             try:
+                app.db.connect()
                 if request_writable and app.config.db.autocommit:
                     app.db.begin()
 
