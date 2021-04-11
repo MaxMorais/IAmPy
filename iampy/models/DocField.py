@@ -11,10 +11,10 @@ DocField = ODict(
     keyword_fields=[
         "name",
         "label",
-        "is_single",
-        "is_tree",
-        "is_child",
-        'is_submittable'
+        "fieldtype",
+        "fieldname",
+        "required",
+        "options"
     ],
     fields=[
         ODict(

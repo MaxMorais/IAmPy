@@ -215,11 +215,8 @@ class SQLiteDatabase(Database):
         return self.run(f'UPDATE {base_doctype} SET {assigns} WHERE name = ?', values)
 
     def sql(self, query, params=()):
-        try:
-            return self.conn.execute(query, params)
-        except sqlite3.InterfaceError:
-            import pdb; pdb.set_trace()
-
+        return self.conn.execute(query, params)
+        
     def init_type_map(self):
 
         T, I, R = 'TEXT', 'INTEGER', 'REAL'

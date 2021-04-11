@@ -9,11 +9,7 @@ FieldType = ODict(
     is_child=0,
     keyword_fields=[
         'name',
-        'label',
-        'is_single',
-        'is_tree',
-        'is_child',
-        'is_submittable'
+        'virtual'
     ],
     fields=[
         ODict(

@@ -410,9 +410,11 @@ class Database(Observable):
 
         if not fields:
             fields = meta.get_keyword_fields()
-            fields.insert(0, 'name')
         elif isinstance(fields, str):
             fields = [fields]
+
+        if 'name' not in fields:
+            fields.insert(0, 'name')
 
         fields = ", ".join(fields)
 
