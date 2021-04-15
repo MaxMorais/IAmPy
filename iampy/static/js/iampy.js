@@ -95,9 +95,7 @@ const _eventPrefix = "on:";
 class Element extends HTMLElement {
     constructor() {
         super();
-
         this._watched = {};
-        this._initData();
     }
     _initData() {
         let data = this.data();
@@ -137,16 +135,41 @@ class Element extends HTMLElement {
     _renderBody() {
         let template = this._callMethod("template");
         if (template) {
+            debugger;
+            if (typeof (template) === 'string') {
+                let pattern = /<\%\=\sinclude\(\"([a-zA-Z_]+)\"\)\s\%\>/gi,
+                    matches = Array.from(template.match(pattern) || []),
+                    item,
+                    fn;
+                while (matches.length) {
+                    item = matches.shift();
+                    fn = item.split('"')[1];
+
+                    if (typeof (this[fn]) === 'function') template = template.replace(item, this[fn]());
+
+                    Array.from(template.match(pattern)).forEach(match => {
+                        if (!matches.includes(match)) matches.push(match);
+                    });
+                }
+            }
             template = tmpl(template, this);
             this.root.innerHTML = template;
         }
     }
     _setEvents() {
+        function delay(fn, ms=10){
+            let timer;
+            return function(...args){
+                timer && clearTimeout(timer);
+                timer = setTimeout(fn.bind(this,...args), ms);
+            };
+        }
         this._elemChilds().forEach(child => {
             this._eventsOf(child).forEach(it => {
-                child.addEventListener(it.event, e => {
+                child.addEventListener(it.event, delay(e => {
+                    e.preventDefault();
                     this._callMethod(it.callback, e);
-                });
+                }));
             });
         });
     }
@@ -155,7 +178,7 @@ class Element extends HTMLElement {
         if (!parent.childNodes || !parent.childNodes.length) return childs;
         
         Array.from(parent.childNodes).forEach(child => {
-            childs = [...childs, ...this._elemChilds(childs)];
+            childs = childs.concat(this._elemChilds(child));
         });
         return childs
     }
@@ -172,9 +195,10 @@ class Element extends HTMLElement {
     }
     _callMethod(name, ...args) {
         if (typeof this[name] !== "function") return null;
-        return this[name].call(this, args);
+        return this[name].call(this, ...args);
     }
     connectedCallback() {
+        this._initData();
         this.created();
         this._render();
         this.rendered();
@@ -199,9 +223,9 @@ class Element extends HTMLElement {
         }
         this._watched[prop] = handler;
     }
-    static attach(tag, definition) {
+    static attach(tag, definition, extend) {
         if (!tag || tag === "") throw new Error("Component tag must be provided");
-        window.customElements.define(tag, definition);
+        window.customElements.define(tag, definition, extend ? {'extends': extend} : {});
     }
 }
 
@@ -288,7 +312,6 @@ class RESTClient {
     head(url, options) {
         return this._request(url, options, "HEAD");
     }
-
 
     static isFormData(obj) {
         return toString.call(obj) === "[object FormData]";
@@ -396,7 +419,7 @@ class RESTADMINView extends Element {
         if (this.view == 'list') {
             this._initDataList();
         } else if (this.view == 'form') {
-            this._initDataRecord();
+            this._initDataForm();
         }
     }
 
@@ -406,13 +429,14 @@ class RESTADMINView extends Element {
             this.client.get(`/api/resource/${this.doctype}`).then(json => {
                 me._storage.set(`List/${this.doctype}`, json);
                 me.data = json;
+                me._render();
             });
         } else {
             this.data = this._storage.get(`List/${this.doctype}`);
         }
     }
 
-    _initDataRecord() {
+    _initDataForm() {
         if (!this.docname) {
             // new record
             this.data = new Data({
@@ -429,7 +453,7 @@ class RESTADMINView extends Element {
     }
 
     get schema() {
-        return this._schemas.get(this.doctype) || {fields: {}};
+        return this._schemas.get(this.doctype) || {fields: []};
     }
 
     get client() {
@@ -475,11 +499,11 @@ class RESTADMINView extends Element {
                     <div class="col-auto ms-auto d-print-none">
                         <div class="btn-list">
                             <% if (view == "page") { %>
-                            <a href="#" class="btn btn-primary sm-inline-block btn-icon btn-new">
-                                <i class="ti ti-plus"></i> <span class="d-sm-none">Create new <%= doctype %></span>
+                            <a href="#" class="btn btn-primary sm-inline-block btn-icon btn-new" on:click="createNew">
+                                <i class="ti ti-plus"></i> <span class="d-sm-none"> Create new <%= doctype %></span>
                             </a>
                             <% } else { %>
-                            <a href="#" class="btn btn-primary sm-inline-block btn-icon btn-save">
+                            <a href="#" class="btn btn-primary sm-inline-block btn-icon btn-save" on:click="save">
                                 <i class="ti ti-device-floppy"></i> <span class="d-sm-none">Save</span>
                             </a>
                             <% } %>
@@ -507,6 +531,20 @@ class RESTADMINView extends Element {
                     <div class="col-12">
                         <div class="card">
                             <div class="card-header">
+                                <ul class="nav nav-pills card-header-pills">
+                                    <li class="nav-item">
+                                        <div class="my-2 my-md-0 flex-grow-1 flw-md-grow=0">
+                                            <form action="." method="GET">
+                                                <div class="input-icon">
+                                                    <input type="text" class="form-control form-control-sm search" placeholder="Search..." aria-label="Search in <%= doctype %>" on:change="search">
+                                                    <span class="input-icon-addon">
+                                                        <i class="ti ti-search"></i>
+                                                    </span>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </li>
+                                </ul>
                             </div>
                             <div class="table-responsive">
                                 <table class="table card-table table-vcenter table-nowrap table-striped table-hover">
@@ -521,19 +559,19 @@ class RESTADMINView extends Element {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <% for (let row of data) { %>
+                                        <% for (let row of (data && data.length ? data : [])) { %>
                                         <tr data-name="<%= row.name %>">
                                             <% for (let docfield of schema.fields.filter(df => schema.keyword_fields.includes(df.fieldname))) { %>
-                                            <td data-fieldname="<%= docfield.fieldname %>" "<% if (["Percent", "Int", "Float", "Currency"].includes(docfield.fieldtype)) { %>text-right<% }%>">
+                                            <td data-fieldname="<%= docfield.fieldname %>" class="<% if (["Percent", "Int", "Float", "Currency"].includes(docfield.fieldtype)) { %>text-right<% }%>">
                                                 <%= cellDisplay(docfield, row[docfield.fieldname]) %>
                                             </td>
                                             <% } %>
                                             <td>
                                                 <div class="btn-group">
-                                                    <a href="#" class="btn btn-ghost-primary sm-inline-block btn-icon btn-edit" data-doctype="<%= row.doctype %>" data-docname="<%= row.docname %>">
+                                                    <a href="#" class="btn btn-ghost-primary sm-inline-block btn-icon btn-edit" data-doctype="<%= row.doctype %>" data-docname="<%= row.docname %>" on:click="edit">
                                                         <i class="ti ti-pencil"></i>
                                                     </a>
-                                                    <a href="#" class="btn btn-ghost-danger sm-inline-block btn-icon btn-delete" data-doctype="<%= row.doctype %>" data-docname="<%= row.docname %>">
+                                                    <a href="#" class="btn btn-ghost-danger sm-inline-block btn-icon btn-delete" data-doctype="<%= row.doctype %>" data-docname="<%= row.docname %>" on:click="delete">
                                                         <i class="ti ti-plus"></i>
                                                     </a>
                                                 </div>
@@ -558,19 +596,20 @@ class RESTADMINView extends Element {
                     <div class="card">
                         <div class="card-header">
                             <div class="card-title">
-                                <% if (docname) { %>
-                                <h4>Edit <%= doctype %> <%= docname %></h4>
-                                <% } else { %>
-                                <h4>New <%= doctype %></h4>
-                                <% } %>
+                                <h4><% if (docname) { %>Edit <%= doctype %> <%= docname %><% } else { %>New <%= doctype %><% } %></h4>
                             <div>
                             <div class="d-flex">
-                                <a href="#" class="btn btn-ghost-danger btn-cancel">Cancel</a>
-                                <a href="#" class="btn btn-ghost-primary btn-save">Save</a>
+                                <a href="#" class="btn btn-ghost-danger btn-cancel" on:click="cancelEdit">Cancel</a>
+                                <a href="#" class="btn btn-ghost-primary btn-save" on:click="save">Save</a>
                             </div>
                         </div>
                     </div>
                     <div class="card-body">
+                        <form action="." method="POST">
+                            <% for (let docfield of schema.fields) { %>
+                            <rav-control-<% docfield.fieldtype %> 
+                            <% } %>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -588,6 +627,10 @@ class RESTADMINView extends Element {
     }
 
     created() {
+        this[`created_${this.view}`]();
+    }
+
+    created_page() {
         if (!this._schemas.has(this.doctype)) {
             let me = this;
             this.client.get(`/api/resource/DocType/${this.doctype}`).then(json => {
@@ -596,7 +639,367 @@ class RESTADMINView extends Element {
         }
         this.classList.add('page-wrapper');
     }
+
+    created_list() {
+        
+    }
+
+    created_form() {
+        
+    }
+
+    createNew(event) {
+        event.preventDefault();
+    }
+
+    edit(event) {
+        event.preventDefault();
+        debugger;
+    }
+
+    delete(event) {
+        event.preventDefault();
+    }
+
+    save(event) {
+        event.preventDefault();
+    }
+
+    search(event) {
+        event.preventDefault();
+    }
+
+    cancelEdit(event) {
+        event.preventDefault();
+    }
 }
 
-
 Element.attach("rest-admin-view", RESTADMINView);
+
+class RAVBaseControl extends Element {
+    constructor() {
+        this.super();
+        this._schemas = SchemaCache()
+    }
+
+    get doctype() {
+        return this.getAttribute('doctype');
+    }
+
+    get docfield() {
+        return this.getAttribute('docfield')
+    }
+
+    get field() {
+        let schema = this._schemas.get(this.doctype),
+            field;
+        if (schema && schema.fields) {
+            field = schema.fields.filter(df => df.fieldname === this.docfield);
+            if (field && field.length) {
+                field = field[0];
+            }
+        };
+        return field
+    }
+
+    get id() {
+        let others = Array.from(document.querySelectorAll(`.form-field[data-fieldname="${this.field.fieldname}"]`));
+        return `${this.field.fieldname}_${others.length}`;
+    }
+
+    get input() {
+        this.getElementById(this.id);
+    }
+
+    display(value) {
+        return value
+    }
+
+    data() {
+        return this.field;
+    }
+    
+    created() {
+        this.classList.add(`mb-${this.field.columns || 3}`)
+    }
+
+    template() {
+        return `
+        <% include("templateLabel") %>
+        <% include("templateWrapper") %>
+        `
+    }
+    templateLabel() {
+        return `
+        <% if (field.label) { %><label class="form-label" for="<%= id %>" <% if (field.required) %> required <% } %>>
+            <%= field.label %></label>
+            <% include("templateLabelDescription") %>
+        <% } %>`;
+    }
+
+    templateLabelDescription() {
+        return '';
+    }
+
+    templateWrapper() {
+        return `
+        <div class="row g-2">
+            <div class="col">
+                <% include("templateInput") %>
+            </div>
+            <% include("templateDescription") %>
+        </div>
+        `;
+    }
+
+    templateDescription() {
+        return `
+        <% if (field.description) %>
+        <div class="col-auto align-self-center">
+            <span class="form-help" data-bs-toggle="popover" data-bs-placement="top" data-bs-content="<% field.description %>" data-bs-html="true" data-bs-original-title title>?</span>
+        </div>
+        <% } %>
+        `;
+    }
+}
+
+class RAVControlReadOnly extends RAVBaseControl {
+    templateInput() {
+        return `<div class="form-control-plaintext" id="<%= id %>"><%= display(value) %></div>`;
+    }
+
+}
+Element.attach('rav-control-readonly', RAVControlReadOnly);
+
+
+class RAVBaseControlInput extends RAVBaseControl {
+    templateInput() {
+        return `<input type="<% inputType %>" class="form-control" name="<%= fieldname %>" id="<%= id %>" value="<% value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> <% if (field.mask){ %>data-mask="<%= field.mask %>" data-mask-visible="true" <% } %> autocomplete="off">`
+    }
+}
+
+class RAVControlText extends RAVBaseControlInput {
+    get inputType() {
+        return 'text';
+    }
+}
+Element.attach('rav-control-text', RAVControlText);
+
+class RAVControlInt extends RAVControlText {
+    rendered() {
+        this.mask = IMask(
+            this.input,
+            {
+                mask: Number,
+                scale: 0,
+                signed: true
+            }
+        );
+    }
+}
+Element.attach('rav-control-int', RAVControlInt);
+
+class RAVControlIntPositive extends RAVControlInt {
+    rendered() {
+        this.mask = IMask(
+            this.input,
+            {
+                mask: Number,
+                scale: 0,
+                signed: false
+            }
+        );
+    }
+}
+Element.attach('rav-control-intpositive', RAVControlIntPositive);
+
+
+class RAVControlFloat extends RAVControlInt {
+    rendered() {
+        this.mask = IMask(
+            this.input,
+            {
+                mask: Number,
+                scale: this.field.precision,
+                padFractionalZeros: true,
+                normalizeZeros: true
+            }
+        )
+    }
+}
+Element.attach('rav-control-float', RAVControlFloat);
+
+class RAVControlCurrency extends RAVControlFloat {
+}
+
+Element.attach('rav-control-currency', RAVControlCurrency);
+
+class RAVControlPassword extends RAVBaseControlInput {
+    get inputType() {
+        return 'password'
+    }
+
+    templateInput() {
+        let template = super.templateInput();
+        return `
+        <div class="input-group mb-2">
+            ${template}
+            <button class="btn" type="button" on:click="togglePassword">
+                <i class="ti ti-eye" id="<%= id %>_toggleIcon"></i>
+            </button>
+        </div>
+        `;
+    }
+
+    togglePassword(event) {
+        let icon = this.getElementById(`${this.id}_toggleIcon`)
+
+        switch (this.input.type) {
+            case ("password"):
+                this.input.setAttribute("type", "text");
+                icon.classList.remove('ti-eye');
+                icon.classList.add('ti-eye-off');
+                break;
+            default:
+                this.input.setAttribute("type", "password");
+                icon.classList.remove("ti-eye-off");
+                icon.classList.add("ti-eye");
+                break;
+        }
+    }
+}
+Element.attach('rav-control-password', RAVControlPassword);
+
+class RAVControlDate extends RAVBaseControlInput {
+    get inputType() {
+        return 'text';
+    }
+
+    get inputIcon() {
+        return 'calendar';
+    }
+    templateInput() {
+        let template = super.templateInput();
+        return `
+        <div class="input-icon mb-2">
+            ${template}
+            <span class="input-icon-addon">
+                <i class="ti ti-<% inputIcon %>"></i>
+            </span>
+        </div>
+        `
+    }
+    rendered() {
+        this._picker = flatpickr(this.input, {})
+    }
+}
+Element.attach('rav-control-date', RAVControlDate);
+
+class RAVControlDateTime extends RAVControlDate {
+    get inputIcon() {
+        return 'calendar-time';
+    }
+    rendered() {
+        this._picker = flatpickr(this.input, {
+            enableTime: true
+        });
+    }
+}
+Element.attach('rav-control-datetime', RAVControlDateTime);
+
+class RAVControlDateRange extends RAVControlDate {
+    rendered() {
+        this._picker = flatpickr(this.input, {
+            mode: 'range'
+        });
+    }
+}
+Element.attach('rav-control-daterange', RAVControlDateRange);
+
+
+class RAVControlTime extends RAVControlDate {
+    get inputIcon() {
+        return 'clock';
+    }
+    rendered() {
+        this._picker = flatpickr(this.input, {
+            enableTime: true,
+            noCalendar: true,
+            time_24hr: true
+        });
+    }
+}
+Element.attach('rav-control-time', RAVControlTime);
+
+
+class RAVControlTextarea extends RAVBaseControlInput {
+    get size() {
+        return (this.input.value || "").length;
+    }
+    templateLabelDescription() {
+        return `<span class="form-label-description" id="<%= id %>_Counter"><%= size %>/<%= field.length %>`;
+    }
+    templateInput() {
+        return `
+        <textarea  class="form-control" name="<%= fieldname %>" id="<%= id %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> on:keyup="handleCounter">
+            <% display(value) %>
+        </textarea>
+        `;
+    }
+
+    handleCounter(event) {
+        let labelDescription = this.getElementById(`${this.id}_Counter`);
+        labelDescription.clear();
+        labelDescription.appendChild(document.createTextNode(`${this.size} / ${this.field.length}`))
+    }
+}
+Element.attach('rav-control-textarea', RAVControlTextarea);
+
+
+class RAVControlSelect extends RAVBaseControlInput {
+    get multiple() {
+        return false;
+    }
+    templateInput() {
+        return `
+        <select class="form-select" name="<%= fieldname %>" id="<%= id %>" value="<% value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> <% if (multiple) { %>multiple<% } %>>
+            <% for(var option of options){ %>
+                <option value="<% option.value %>" <% if (this.value === option.value) { %>selected<% } %>><% option.label %></option>
+            <% } %>
+        </select>
+        `;
+    }
+}
+Element.attach('rav-control-select', RAVControlSelect);
+
+class RAVControlSelectMultiple extends RAVControlSelect {
+    get multiple() {
+        return true;
+    }
+}
+Element.attach('rav-control-selectmultiple', RAVControlSelectMultiple);
+
+class RAVControlSelectGroup extends RAVControlSelect {
+    get inputType() {
+        return (!this.multiple) ? 'radio' : 'checkbox';
+    }
+    template() {
+        return `
+        <div class="form-selectgroup">
+            <% for (var options of options) { %>
+            <label class="form-selectgroup-item">
+                <input type="<% inputType %>" class="form-selectgroup-input" name="<%= fieldname %>" id="<%= id %>" value="<% value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> autocomplete="off">
+            </label>
+            <% } %>
+        </div>
+        `;
+    }
+}
+Element.attach('rav-control-selectgroup', RAVControlSelectGroup);
+
+class RAVControlSelectGroupMultiple extends RAVControlSelectGroup  {
+    get multiple() {
+        return true;
+    }
+}
+Element.attach('rav-control-selectgroupmultiple', RAVControlSelectGroupMultiple);
