@@ -36,6 +36,7 @@ class Application(ODict):
         self.db = SQLiteDatabase(self)
         self.db.connect()
         self.register_meta(core_models.models)
+        # TODO: need move below code to `iampy create-project`
         if not self.db.table_exists('DocType') \
                 or not self.db.exists('DocType', 'DocType'):
             self.db.migrate()
@@ -44,6 +45,7 @@ class Application(ODict):
             self.db.close()
 
     def init_config(self):
+        # TODO: need removal from app code, and import from `iampy create-project` dir
         self.config = ODict(
             backend='sqlite',
             db=ODict(
@@ -54,7 +56,22 @@ class Application(ODict):
                 ),
                 connection_params=ODict(),
                 dictrows = True,
-                debug = True
+                debug = False
+            ),
+            web=ODict(
+                static_files_dir=os.path.join(
+                    os.path.abspath(os.path.dirname(__file__)),
+                    'static'
+                ),
+                templates_dir=os.path.join(
+                    os.path.abspath(os.path.dirname(__file__)),
+                    'templates'
+                ),
+                upload_dir=os.path.join(
+                    os.path.abspath(os.path.dirname(__file__)),
+                    'storage',
+                    'uploads'
+                )
             )
         )
 

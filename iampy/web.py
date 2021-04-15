@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(
 from iampy import get_application
 from iampy.backends.sqlite import SQLiteDatabase, sqlite3
 from iampy.utils.observable import ODict
-from bottle import route, run, request, response, PluginError
+from bottle import route, template, run, request, response, PluginError
 import json
 import bottle
 import inspect
@@ -50,27 +50,37 @@ class IAmPyPlugin(object):
         def wrapper(*args, **kwargs):
             app = get_application()
 
+            if app.config.web.templates_dir not in bottle.TEMPLATE_PATH:
+                bottle.TEMPLATE_PATH.insert(0, app.config.web.templates_dir)
+
+            # Inject the `keyword` on the kwargs, eg (app=app)
             kwargs[self.keyword] = app
             request_writable = bottle.request.method in ('POST', 'PUT', 'DELETE')
 
             try:
+                # Connect to the database
                 app.db.connect()
                 if request_writable and app.config.db.autocommit:
+                    # Start transaction when in Writable Mode
                     app.db.begin()
-
+                
                 rv = callback(*args, **kwargs)
                 
                 if request_writable and app.config.db.autocommit:
+                    # Auto-commit when in Writable Mode
                     app.db.commit()
             except sqlite3.IntegrityError as e:
                 if request_writable and app.config.db.autocommit:
+                    # Auto-Rollback if something went wrong in Writable Mode
                     app.db.rollback()
                 raise bottle.HTTPError(500, 'Database Error', e)
             except bottle.HTTPError as e:
                 if request_writable and app.config.db.autocommit:
+                    # If what went wrong is an HTTPError (error 400), ensure write
                     app.db.commit()
                 raise e
             finally:
+                # Close the database connection
                 app.db.close()
 
             if getattr(callback, 'as_json', False):
@@ -87,6 +97,10 @@ class IAmPyPlugin(object):
 def rjson(fn):
     fn.as_json = True
     return fn
+
+@route('/static/<filename:path>')
+def static_file(filename, app):
+    return bottle.static_file(filename, root=app.config.web.static_files_dir)
 
 
 @route('/api/resource/<doctype>')
@@ -173,7 +187,7 @@ def delete_many(doctype, app):
     return {}
 
 
-@route('/api/resource/<doctype>/<name>', 'POST')
+@route('/api/upload/<doctype>/<name>', 'POST')
 @rjson
 def upload_to_doc(doctype, name, app):
     tenant_dir = app.get_tenant_dir('uploads')
@@ -192,6 +206,11 @@ def upload_to_doc(doctype, name, app):
 def upload_to_field(doctype, name, fieldname, app):
     file_docs = upload(app, doctype, name)
     
+
+@route('/')
+def index(app):
+    return template('page', {})
+
 
 if __name__ == '__main__':
     app = bottle.default_app()
