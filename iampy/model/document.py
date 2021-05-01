@@ -32,7 +32,7 @@ class BaseDocument(Observable):
             value = data[fieldname]
             if isinstance(value, dict): # Form
                 self[fieldname] = self._init_child(value, fieldname)
-            elif isinstance(value, list): # Table
+            elif isinstance(value, list): # Table and Tags
                 for child in value:
                     self.append(fieldname, child)
     

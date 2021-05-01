@@ -5,12 +5,14 @@ DocType = ODict(
     name = 'DocType',
     label = 'DocType',
     doctype = 'DocType',
+    description = 'Master table of all Meta-Data, containing the description of all tables, and allowing users to define new tables.',
     is_single = 0,
     is_tree = 0,
     is_child = 0,
+    is_submittable = 0,
     keyword_fields = [
-        'name', 
         'label', 
+        'description',
         'is_single', 
         'is_tree', 
         'is_child',
@@ -28,6 +30,11 @@ DocType = ODict(
             label = 'Label',
             fieldtype = 'Data',
             required = 1
+        ),
+        ODict(
+            fieldname = 'description',
+            label = 'Description',
+            fieldtype = 'Small Text'
         ),
         ODict(
             fieldname = 'is_single',
@@ -71,11 +78,6 @@ DocType = ODict(
             fieldtype = 'Table',
             required = 1,
             childtype = 'DocField'
-        ),
-        ODict(
-            fieldname='description',
-            label="Description",
-            fieldtype="Text"
         ),
         ODict(
             fieldname='hidden',

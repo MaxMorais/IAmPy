@@ -222,8 +222,9 @@ class BaseMeta(BaseDocument):
     def get_keyword_fields(self):
         if not self._keyword_fields:
             self._keyword_fields = self.keyword_fields
+            print(self._keyword_fields)
 
-            if not (self._keyword_fields and self.fields):
+            if (not self._keyword_fields and self.fields):
                 self._keyword_fields = tuple(map(lambda df: df.fieldname, 
                     filter(lambda df: df.fieldtype not in ('Form', 'Table') and df.required, self.fields)))
             

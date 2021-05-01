@@ -5,9 +5,11 @@ DocField = ODict(
     name = "DocField",
     label="Fields",
     doctype="DocType",
+    description='Master table of all table fields, the maintenance of this information is made from `DocType` form',
     is_single=0,
     is_tree=0,
     is_child=1,
+    is_submittable=0,
     keyword_fields=[
         "name",
         "label",

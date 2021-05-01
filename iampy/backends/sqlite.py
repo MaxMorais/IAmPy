@@ -224,9 +224,11 @@ class SQLiteDatabase(Database):
         self.type_map = ODict({
             'Currency': R,
             'Float': R,
+            'Float Positive': R,
             'Percent': R,
             'Check': I,
             'Int': I,
+            'Int Positive': I,
             'AutoComplete': T,
             'Small Text': T,
             'Long Text': T,

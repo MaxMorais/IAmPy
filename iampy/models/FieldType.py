@@ -4,9 +4,11 @@ FieldType = ODict(
     name="FieldType",
     label="Field Type",
     doctype="DocType",
+    description='Master table of all FieldTypes into the System, users can define they own custom fields types.',
     is_single=0,
     is_tree=0,
     is_child=0,
+    is_submittable=0,
     keyword_fields=[
         'name',
         'virtual'
