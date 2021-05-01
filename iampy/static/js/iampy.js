@@ -137,7 +137,7 @@ class Element extends HTMLElement {
         } else {
             this.root = this;
         }
-        this.root.innerHTML = "";
+        this.root.textContent = '';
     }
     _renderStyles() {
         let styles = this._callMethod("styles");
@@ -151,7 +151,7 @@ class Element extends HTMLElement {
         let template = this._callMethod("template");
         if (template) {
             if (typeof (template) === 'string') {
-                let pattern = /<\%\=\sinclude\(\"([a-zA-Z_]+)\"\)\s\%\>/gi,
+                let pattern = /<\%\sinclude\(\"([a-zA-Z_]+)\"\)\s\%\>/gi,
                     matches = Array.from(template.match(pattern) || []),
                     item,
                     fn;
@@ -161,13 +161,12 @@ class Element extends HTMLElement {
 
                     if (typeof (this[fn]) === 'function') template = template.replace(item, this[fn]());
 
-                    Array.from(template.match(pattern)).forEach(match => {
+                    Array.from(template.match(pattern) || '').forEach(match => {
                         if (!matches.includes(match)) matches.push(match);
                     });
                 }
             }
-            template = tmpl(template, this);
-            this.root.innerHTML = template;
+            this.root.innerHTML = tmpl(template, this);
         }
     }
     _setEvents() {
@@ -182,7 +181,7 @@ class Element extends HTMLElement {
     }
     _unsetEvents() {
         this._elemChilds().forEach(child => {
-            if (!child || !child.parentNode) return;
+            if (child === this || !child || !child.parentNode) return;
             //this._eventsOf(child).forEach(it => {
                 child.parentNode.replaceChild(child.cloneNode(true), child);
             //});
@@ -218,8 +217,7 @@ class Element extends HTMLElement {
         this._render();
         this.rendered();
     }
-    disconnectedCallback(e) {
-        e.stopImmediatePropagation();
+    disconnectedCallback() {
         this._unsetEvents();
         this.destroyed();
     }
@@ -430,7 +428,7 @@ class RESTADMINView extends Element {
     }
 
     _initData() {
-        this._storage = new Cache();
+        if (!this._storage) this._storage = new Cache();
         if (this.view == 'list') {
             this._initDataList();
         } else if (this.view == 'form') {
@@ -444,12 +442,13 @@ class RESTADMINView extends Element {
             this.client.get(`/api/resource/${this.doctype}`).then(json => {
                 me._storage.set(`List/${this.doctype}`, json);
                 me.data = json;
-                me._unsetEvents()
                 me._render();
                 me.rendered();
             });
         } else {
             this.data = this._storage.get(`List/${this.doctype}`);
+            this._render();
+            this.rendered();
         }
     }
 
@@ -461,14 +460,16 @@ class RESTADMINView extends Element {
                 name: Math.random().toString(36).substr(3),
                 __saved: false
             };
+            this.docname = doc.name;
             this._storage.set(`${this.doctype}/${doc.name}`, doc);
             this.data = new Data(doc, change => this._dataHandler(change));
+            this._render();
         } else {
             // existing record
-            let me = this;
-            this.client.get(`/api/resource/${this.doctype}/${this.docname}`).then(json => {
-                me._storage.set(`${me.doctype}/${me.docname}`, json);
-                me.data = new Data(json, change => this._dataHandler(change));
+            this.client.get(this.url).then(json => {
+                this._storage.set(`${this.doctype}/${this.docname}`, json);
+                this.data = new Data(json, change => this._dataHandler(change));
+                this._render();
             });
         }
     }
@@ -697,21 +698,22 @@ class RESTADMINView extends Element {
                         <div class="card-header">
                             <div class="card-title">
                                 <h4><%= doctype %>: <%= docname %></h4>
-                            <div>
+                            </div>
                             <div class="d-flex">
-                                <a href="#" class="btn btn-ghost-danger btn-cancel" on:click="cancel">Cancel</a>
-                                <a href="#" class="btn btn-ghost-primary btn-save" on:click="save">Save</a>
+                                <a href="#" class="btn btn-ghost-danger btn-cancel" on:click="cancel" data-doctype="<%= doctype %>">Cancel</a>
+                                <a href="#" class="btn btn-ghost-primary btn-save" on:click="save" data-doctype="<%= doctype %>">Save</a>
                             </div>
                         </div>
-                    </div>
-                    <div class="card-body">
-                        <form action="." method="POST">
-                            <% let fieldtype; %>
-                            <% for (let docfield of schema.fields) { %>
-                                <% fieldtype = docfield.fieldtype.toLowerCase().replace(" ", ""); %> 
-                            <rav-control-<%= fieldtype %> doctype="<%= doctype %>" docname="<%= docname %>" docfield="<%= docfield.name %>" ></rav-control-<%= fieldtype %>
-                            <% } %>
-                        </form>
+                        <div class="card-body">
+                            <form action="." method="POST">
+                                <% let fieldtype; %>
+                                <% for (let docfield of schema.fields) { %>
+                                    <% if (docfield.fieldname === "name") continue;  %> 
+                                    <% fieldtype = docfield.fieldtype.toLowerCase().replace(" ", ""); %> 
+                                <rav-control-<%= fieldtype %> doctype="<%= doctype %>" docname="<%= docname %>" docfield="<%= docfield.name %>" ></rav-control-<%= fieldtype %>>
+                                <% } %>
+                            </form>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -729,14 +731,15 @@ class RESTADMINView extends Element {
     }
 
     _changeView(doctype, docname, view='page') {
-        debugger;
         this._unsetEvents();
 
         this.doctype = doctype;
         this.docname = docname;
         this.view = view;
 
-        this._render();
+        this._initData();
+
+        //this._render();
     }
 
     created() {
@@ -778,6 +781,9 @@ class RESTADMINView extends Element {
     }
 
     cancel(event) {
+        debugger;
+        let btn = event.currentTarget;
+        this._changeView(btn.dataset.doctype, null, 'list');
     }
 }
 Element.attach("rest-admin-view", RESTADMINView);
@@ -823,7 +829,7 @@ class RAVBaseControl extends Element {
     }
 
     get input() {
-        this.getElementById(this.id);
+        return document.getElementById(this.id);
     }
 
     get docValue() {
@@ -842,13 +848,17 @@ class RAVBaseControl extends Element {
         this.input.value = value;
     }
 
+    get value() {
+        return this.docValue;
+    }
+
     set value(value) {
         this.docValue = value;
         this.inputValue = value;
     }
 
     display(value) {
-        return value
+        return value;
     }
 
     data() {
@@ -863,11 +873,12 @@ class RAVBaseControl extends Element {
         return `
         <% include("templateLabel") %>
         <% include("templateWrapper") %>
-        `
+        `;
     }
     templateLabel() {
         return `
-        <% if (field.label) { %><label class="form-label" for="<%= id %>" <% if (field.required) %> required <% } %>>
+        <% if (field.label) { %>
+            <label class="form-label" for="<%= id %>" <% if (field.required) { %> required <% } %>>
             <%= field.label %></label>
             <% include("templateLabelDescription") %>
         <% } %>`;
@@ -890,9 +901,9 @@ class RAVBaseControl extends Element {
 
     templateDescription() {
         return `
-        <% if (field.description) %>
+        <% if (field.description) { %>
         <div class="col-auto align-self-center">
-            <span class="form-help" data-bs-toggle="popover" data-bs-placement="top" data-bs-content="<% field.description %>" data-bs-html="true" data-bs-original-title title>?</span>
+            <span class="form-help" data-bs-toggle="popover" data-bs-placement="top" data-bs-content="<%= field.description %>" data-bs-html="true" data-bs-original-title title>?</span>
         </div>
         <% } %>
         `;
@@ -909,7 +920,7 @@ Element.attach('rav-control-readonly', RAVControlReadOnly);
 
 class RAVBaseControlInput extends RAVBaseControl {
     templateInput() {
-        return `<input type="<% inputType %>" class="form-control" name="<%= fieldname %>" id="<%= id %>" value="<% value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> <% if (field.mask){ %>data-mask="<%= field.mask %>" data-mask-visible="true" <% } %> autocomplete="off">`
+        return `<input type="<%= inputType %>" class="form-control" name="<%= field.fieldname %>" id="<%= id %>" value="<%= value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> <% if (field.mask){ %>data-mask="<%= field.mask %>" data-mask-visible="true" <% } %> autocomplete="off">`
     }
 }
 
@@ -1092,6 +1103,21 @@ class RAVControlCheckbox extends RAVBaseControlInput {
     get inputType() {
         return 'checkbox';
     }
+    template() {
+        return `
+        <label class="form-check">
+            <% include("templateInput") %>
+            <% include("templateInputLabel") %>
+        </label>
+        `;
+    }
+    templateInput() {
+        return `<input type="<%= inputType %>" class="form-check-input" name="<%= field.fieldname %>" id="<%= id %>" value="<%= value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> <% if (field.mask){ %>data-mask="<%= field.mask %>" data-mask-visible="true" <% } %> autocomplete="off">`
+    }
+    templateInputLabel() {
+        return `<span class="form-check-label"><%= field.label %></span>`;
+    }
+
 }
 Element.attach('rav-control-check', RAVControlCheckbox);
 
@@ -1103,23 +1129,29 @@ class RAVControlFile extends RAVBaseControlInput {
 Element.attach('rav-control-attach', RAVControlFile);
 class RAVControlTextarea extends RAVBaseControlInput {
     get size() {
-        return (this.input.value || "").length;
+        return (this.input ? this.input.value : "").length;
     }
     templateLabelDescription() {
-        return `<span class="form-label-description" id="<%= id %>_Counter"><%= size %>/<%= field.length %>`;
+        return `
+            <% if (field.length) { %>
+            <span class="form-label-description" id="<%= id %>_Counter"><%= size %>/<%= field.length %></span>
+            <% } %>
+        `;
     }
     templateInput() {
         return `
-        <textarea  class="form-control" name="<%= fieldname %>" id="<%= id %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> on:keyup="handleCounter">
-            <% display(value) %>
-        </textarea>
+        <textarea  class="form-control" name="<%= field.fieldname %>" id="<%= id %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> on:keyup="handleCounter"><%= display(value) %></textarea>
         `;
     }
 
     handleCounter(event) {
-        let labelDescription = this.getElementById(`${this.id}_Counter`);
+        let labelDescription = document.getElementById(`${this.id}_Counter`);
         labelDescription.clear();
         labelDescription.appendChild(document.createTextNode(`${this.size} / ${this.field.length}`))
+    }
+
+    display(value) {
+        return (value || '').trim();
     }
 }
 Element.attach('rav-control-smalltext', RAVControlTextarea);
@@ -1133,7 +1165,7 @@ class RAVControlSelect extends RAVBaseControlInput {
     }
     templateInput() {
         return `
-        <select class="form-select" name="<%= fieldname %>" id="<%= id %>" value="<% value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> <% if (multiple) { %>multiple<% } %>>
+        <select class="form-select" name="<%= field.fieldname %>" id="<%= id %>" value="<% value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> <% if (multiple) { %>multiple<% } %>>
             <% for(var option of options){ %>
                 <option value="<% option.value %>" <% if (this.value === option.value) { %>selected<% } %>><% option.label %></option>
             <% } %>
@@ -1159,7 +1191,7 @@ class RAVControlSelectGroup extends RAVControlSelect {
         <div class="form-selectgroup">
             <% for (var options of options) { %>
             <label class="form-selectgroup-item">
-                <input type="<% inputType %>" class="form-selectgroup-input" name="<%= fieldname %>" id="<%= id %>" value="<% value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> autocomplete="off">
+                <input type="<%= inputType %>" class="form-selectgroup-input" name="<%= field.fieldname %>" id="<%= id %>" value="<% value %>" <% if (field.placeholder) { %>placeholder="<%= field.placeholder %>"<% } %> <% if (field.disabled) { %>disabled<% } %> <% if (field.readonly) { %>readonly<% } %> autocomplete="off">
             </label>
             <% } %>
         </div>
